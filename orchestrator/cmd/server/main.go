@@ -12,6 +12,7 @@ import (
 
 	"github.com/akshat/pipeline-orchestrator/api/router"
 	"github.com/akshat/pipeline-orchestrator/internal/config"
+	"github.com/akshat/pipeline-orchestrator/internal/database"
 )
 
 func main() {
@@ -21,8 +22,20 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	// Connect to PostgreSQL
+	db, err := database.Connect(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	// Run database migrations
+	if err := database.RunMigrations(db); err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+
 	// Build the HTTP router with all API routes registered
-	r := router.New(cfg)
+	r := router.New(db)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
