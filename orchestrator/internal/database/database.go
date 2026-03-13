@@ -30,6 +30,7 @@ func Connect(databaseURL string) (*sql.DB, error) {
 func RunMigrations(db *sql.DB) error {
 	migrations := []string{
 		migrationCreatePipelines,
+		migrationPhaseTwo,
 	}
 
 	for i, m := range migrations {
@@ -64,4 +65,36 @@ CREATE TABLE IF NOT EXISTS pipeline_steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_steps_pipeline_id ON pipeline_steps(pipeline_id);
+`
+
+const migrationPhaseTwo = `
+ALTER TABLE pipeline_steps
+ADD COLUMN IF NOT EXISTS step_key TEXT NOT NULL DEFAULT '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_pipeline_step_key
+ON pipeline_steps(pipeline_id, step_key)
+WHERE step_key <> '';
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+	id          TEXT PRIMARY KEY,
+	pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+	status      TEXT NOT NULL DEFAULT 'pending',
+	started_at  TIMESTAMPTZ,
+	finished_at TIMESTAMPTZ,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS step_runs (
+	id              TEXT PRIMARY KEY,
+	pipeline_run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+	step_id         TEXT NOT NULL REFERENCES pipeline_steps(id) ON DELETE CASCADE,
+	status          TEXT NOT NULL DEFAULT 'pending',
+	started_at      TIMESTAMPTZ,
+	finished_at     TIMESTAMPTZ,
+	error           TEXT NOT NULL DEFAULT '',
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline_id ON pipeline_runs(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_step_runs_run_id ON step_runs(pipeline_run_id);
 `

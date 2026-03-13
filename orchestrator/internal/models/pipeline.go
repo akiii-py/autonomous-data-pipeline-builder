@@ -18,6 +18,7 @@ type Pipeline struct {
 type Step struct {
 	ID         string          `json:"id"`
 	PipelineID string          `json:"pipeline_id"`
+	Key        string          `json:"key"`
 	Name       string          `json:"name"`
 	Type       string          `json:"type"`
 	Config     json.RawMessage `json:"config"`
@@ -33,10 +34,31 @@ type CreatePipelineRequest struct {
 }
 
 type CreateStepRequest struct {
+	Key       string          `json:"key"`
 	Name      string          `json:"name"`
 	Type      string          `json:"type"`
 	Config    json.RawMessage `json:"config"`
 	DependsOn []string        `json:"depends_on"`
+}
+
+type PipelineRun struct {
+	ID         string     `json:"id"`
+	PipelineID string     `json:"pipeline_id"`
+	Status     string     `json:"status"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type StepRun struct {
+	ID            string     `json:"id"`
+	PipelineRunID string     `json:"pipeline_run_id"`
+	StepID        string     `json:"step_id"`
+	Status        string     `json:"status"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 const (
@@ -44,6 +66,14 @@ const (
 	StatusActive = "active"
 	StatusPaused = "paused"
 	StatusFailed = "failed"
+)
+
+const (
+	RunStatusPending   = "pending"
+	RunStatusRunning   = "running"
+	RunStatusCompleted = "completed"
+	RunStatusFailed    = "failed"
+	RunStatusSkipped   = "skipped"
 )
 
 const (

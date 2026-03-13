@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/akshat/pipeline-orchestrator/internal/dag"
 	"github.com/akshat/pipeline-orchestrator/internal/models"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -61,6 +62,10 @@ func (s *PipelineStore) GetByID(ctx context.Context, id string) (*models.Pipelin
 }
 
 func (s *PipelineStore) Create(ctx context.Context, req models.CreatePipelineRequest) (*models.Pipeline, error) {
+	if _, err := dag.BuildFromCreateSteps(req.Steps); err != nil {
+		return nil, fmt.Errorf("invalid pipeline dag: %w", err)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -87,11 +92,11 @@ func (s *PipelineStore) Create(ctx context.Context, req models.CreatePipelineReq
 		}
 		var step models.Step
 		err = tx.QueryRowContext(ctx,
-			`INSERT INTO pipeline_steps (id, pipeline_id, name, type, config, depends_on, step_order)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 RETURNING id, pipeline_id, name, type, config, depends_on, step_order, created_at`,
-			stepID, pipelineID, sr.Name, sr.Type, cfg, pq.Array(sr.DependsOn), i+1).
-			Scan(&step.ID, &step.PipelineID, &step.Name, &step.Type, &step.Config,
+			`INSERT INTO pipeline_steps (id, pipeline_id, step_key, name, type, config, depends_on, step_order)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 RETURNING id, pipeline_id, step_key, name, type, config, depends_on, step_order, created_at`,
+			stepID, pipelineID, sr.Key, sr.Name, sr.Type, cfg, pq.Array(sr.DependsOn), i+1).
+			Scan(&step.ID, &step.PipelineID, &step.Key, &step.Name, &step.Type, &step.Config,
 				pq.Array(&step.DependsOn), &step.StepOrder, &step.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("insert step %d: %w", i+1, err)
@@ -119,7 +124,7 @@ func (s *PipelineStore) Delete(ctx context.Context, id string) error {
 
 func (s *PipelineStore) getSteps(ctx context.Context, pipelineID string) ([]models.Step, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, pipeline_id, name, type, config, depends_on, step_order, created_at
+		`SELECT id, pipeline_id, step_key, name, type, config, depends_on, step_order, created_at
 		 FROM pipeline_steps WHERE pipeline_id = $1 ORDER BY step_order`, pipelineID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
@@ -129,7 +134,7 @@ func (s *PipelineStore) getSteps(ctx context.Context, pipelineID string) ([]mode
 	var steps []models.Step
 	for rows.Next() {
 		var st models.Step
-		if err := rows.Scan(&st.ID, &st.PipelineID, &st.Name, &st.Type, &st.Config,
+		if err := rows.Scan(&st.ID, &st.PipelineID, &st.Key, &st.Name, &st.Type, &st.Config,
 			pq.Array(&st.DependsOn), &st.StepOrder, &st.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}

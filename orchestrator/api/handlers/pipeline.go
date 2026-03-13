@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/akshat/pipeline-orchestrator/internal/models"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
@@ -44,6 +45,10 @@ func (h *PipelineHandler) CreatePipeline(w http.ResponseWriter, r *http.Request)
 	pipeline, err := h.Store.Create(r.Context(), req)
 	if err != nil {
 		log.Printf("create pipeline: %v", err)
+		if strings.Contains(err.Error(), "invalid pipeline dag") {
+			http.Error(w, `{"error":"invalid pipeline dependency graph"}`, http.StatusBadRequest)
+			return
+		}
 		http.Error(w, `{"error":"failed to create pipeline"}`, http.StatusInternalServerError)
 		return
 	}
