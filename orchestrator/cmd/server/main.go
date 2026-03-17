@@ -35,7 +35,7 @@ func main() {
 	}
 
 	// Build the HTTP router with all API routes registered
-	r := router.New(db)
+	r := router.New(db, cfg)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

@@ -3,9 +3,12 @@ package router
 import (
 	"database/sql"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/akshat/pipeline-orchestrator/api/handlers"
 	"github.com/akshat/pipeline-orchestrator/api/middleware"
+	"github.com/akshat/pipeline-orchestrator/internal/config"
 	"github.com/akshat/pipeline-orchestrator/internal/dispatcher"
 	"github.com/akshat/pipeline-orchestrator/internal/scheduler"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
@@ -13,13 +16,20 @@ import (
 
 // New creates the main HTTP router with all routes registered.
 // This is the single entry point for all API traffic.
-func New(db *sql.DB) http.Handler {
+func New(db *sql.DB, cfg *config.Config) http.Handler {
 	mux := http.NewServeMux()
 	ps := store.NewPipelineStore(db)
 
+	var d dispatcher.Dispatcher
+	if strings.EqualFold(cfg.ExecMode, "worker") {
+		d = dispatcher.NewHTTPDispatcher(cfg.WorkerURL, time.Duration(cfg.WorkerTimeoutMS)*time.Millisecond)
+	} else {
+		d = dispatcher.NewLocalDispatcher()
+	}
+
 	ph := &handlers.PipelineHandler{
 		Store:     ps,
-		Scheduler: scheduler.New(ps, dispatcher.NewLocalDispatcher()),
+		Scheduler: scheduler.New(ps, d),
 	}
 
 	// Health check — used by Docker/K8s to verify the service is alive
