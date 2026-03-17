@@ -61,6 +61,22 @@ type StepRun struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
+type StepRunStatus struct {
+	StepID     string     `json:"step_id"`
+	StepKey    string     `json:"step_key"`
+	StepName   string     `json:"step_name"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type PipelineStatusResponse struct {
+	PipelineID string          `json:"pipeline_id"`
+	Run        *PipelineRun    `json:"run,omitempty"`
+	Steps      []StepRunStatus `json:"steps,omitempty"`
+}
+
 const (
 	StatusDraft  = "draft"
 	StatusActive = "active"

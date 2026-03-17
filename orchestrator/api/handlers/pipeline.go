@@ -1,18 +1,21 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/akshat/pipeline-orchestrator/internal/models"
+	"github.com/akshat/pipeline-orchestrator/internal/scheduler"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
 )
 
 // PipelineHandler holds dependencies for pipeline endpoints.
 type PipelineHandler struct {
-	Store *store.PipelineStore
+	Store     *store.PipelineStore
+	Scheduler *scheduler.Scheduler
 }
 
 // ListPipelines returns all pipelines for the authenticated user.
@@ -90,8 +93,7 @@ func (h *PipelineHandler) DeletePipeline(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RunPipeline triggers execution of a pipeline.
-// Stub — requires scheduler from Phase 3.
+// RunPipeline creates a run and schedules DAG execution.
 func (h *PipelineHandler) RunPipeline(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -100,17 +102,34 @@ func (h *PipelineHandler) RunPipeline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"pipeline not found"}`, http.StatusNotFound)
 		return
 	}
+	if h.Scheduler == nil {
+		http.Error(w, `{"error":"scheduler not configured"}`, http.StatusInternalServerError)
+		return
+	}
+
+	run, err := h.Store.CreateRun(r.Context(), id)
+	if err != nil {
+		log.Printf("create run: %v", err)
+		http.Error(w, `{"error":"failed to create run"}`, http.StatusInternalServerError)
+		return
+	}
+
+	go func(pipelineID, runID string) {
+		if err := h.Scheduler.ExecuteRun(context.Background(), pipelineID, runID); err != nil {
+			log.Printf("execute run failed (pipeline=%s run=%s): %v", pipelineID, runID, err)
+		}
+	}(id, run.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "pipeline run queued — scheduler not implemented yet (Phase 3)",
+		"message": "pipeline run queued",
 		"id":      id,
+		"run_id":  run.ID,
 	})
 }
 
-// PipelineStatus returns the current execution state of a pipeline.
-// Stub — requires execution tracking from Phase 3.
+// PipelineStatus returns the latest run status and step-level state.
 func (h *PipelineHandler) PipelineStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -120,9 +139,17 @@ func (h *PipelineHandler) PipelineStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	status, err := h.Store.GetLatestRunStatus(r.Context(), id)
+	if err != nil {
+		log.Printf("pipeline status: %v", err)
+		http.Error(w, `{"error":"failed to fetch pipeline status"}`, http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": pipeline.Status,
-		"id":     id,
-	})
+	if status == nil {
+		json.NewEncoder(w).Encode(models.PipelineStatusResponse{PipelineID: id})
+		return
+	}
+	json.NewEncoder(w).Encode(status)
 }

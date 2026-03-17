@@ -6,6 +6,8 @@ import (
 
 	"github.com/akshat/pipeline-orchestrator/api/handlers"
 	"github.com/akshat/pipeline-orchestrator/api/middleware"
+	"github.com/akshat/pipeline-orchestrator/internal/dispatcher"
+	"github.com/akshat/pipeline-orchestrator/internal/scheduler"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
 )
 
@@ -13,9 +15,11 @@ import (
 // This is the single entry point for all API traffic.
 func New(db *sql.DB) http.Handler {
 	mux := http.NewServeMux()
+	ps := store.NewPipelineStore(db)
 
 	ph := &handlers.PipelineHandler{
-		Store: store.NewPipelineStore(db),
+		Store:     ps,
+		Scheduler: scheduler.New(ps, dispatcher.NewLocalDispatcher()),
 	}
 
 	// Health check — used by Docker/K8s to verify the service is alive
