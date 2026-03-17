@@ -296,6 +296,53 @@ func (s *PipelineStore) GetLatestRunStatus(ctx context.Context, pipelineID strin
 	}, nil
 }
 
+func (s *PipelineStore) GetRunStatusByID(ctx context.Context, pipelineID, runID string) (*models.PipelineStatusResponse, error) {
+	var run models.PipelineRun
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, pipeline_id, status, started_at, finished_at, created_at
+		 FROM pipeline_runs
+		 WHERE id = $1 AND pipeline_id = $2`,
+		runID, pipelineID,
+	).Scan(&run.ID, &run.PipelineID, &run.Status, &run.StartedAt, &run.FinishedAt, &run.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("run by id: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT sr.step_id, ps.step_key, ps.name, sr.status, sr.error, sr.started_at, sr.finished_at
+		 FROM step_runs sr
+		 JOIN pipeline_steps ps ON ps.id = sr.step_id
+		 WHERE sr.pipeline_run_id = $1
+		 ORDER BY ps.step_order`,
+		run.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list step runs by id: %w", err)
+	}
+	defer rows.Close()
+
+	steps := make([]models.StepRunStatus, 0)
+	for rows.Next() {
+		var srs models.StepRunStatus
+		if err := rows.Scan(&srs.StepID, &srs.StepKey, &srs.StepName, &srs.Status, &srs.Error, &srs.StartedAt, &srs.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scan step run by id: %w", err)
+		}
+		steps = append(steps, srs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &models.PipelineStatusResponse{
+		PipelineID: pipelineID,
+		Run:        &run,
+		Steps:      steps,
+	}, nil
+}
+
 func (s *PipelineStore) getSteps(ctx context.Context, pipelineID string) ([]models.Step, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, pipeline_id, step_key, name, type, config, depends_on, step_order, created_at

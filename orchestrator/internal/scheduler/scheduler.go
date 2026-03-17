@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/akshat/pipeline-orchestrator/internal/dag"
@@ -56,16 +57,24 @@ func (s *Scheduler) ExecuteRun(ctx context.Context, pipelineID, runID string) er
 			step := stepsByKey[key]
 			queued[key] = true
 
-			if err := s.store.UpdateStepRunStatus(ctx, runID, step.ID, models.RunStatusRunning, ""); err != nil {
-				_ = s.store.UpdatePipelineRunStatus(ctx, runID, models.RunStatusFailed)
-				return fmt.Errorf("set step running: %w", err)
+			retries := maxRetriesForStep(step)
+			var execErr error
+			for attempt := 0; attempt <= retries; attempt++ {
+				if err := s.store.UpdateStepRunStatus(ctx, runID, step.ID, models.RunStatusRunning, ""); err != nil {
+					_ = s.store.UpdatePipelineRunStatus(ctx, runID, models.RunStatusFailed)
+					return fmt.Errorf("set step running: %w", err)
+				}
+
+				execErr = s.dispatcher.ExecuteStep(ctx, runID, step)
+				if execErr == nil {
+					break
+				}
 			}
 
-			err := s.dispatcher.ExecuteStep(ctx, runID, step)
-			if err != nil {
-				_ = s.store.UpdateStepRunStatus(ctx, runID, step.ID, models.RunStatusFailed, err.Error())
+			if execErr != nil {
+				_ = s.store.UpdateStepRunStatus(ctx, runID, step.ID, models.RunStatusFailed, execErr.Error())
 				_ = s.store.UpdatePipelineRunStatus(ctx, runID, models.RunStatusFailed)
-				return fmt.Errorf("execute step %s: %w", step.Key, err)
+				return fmt.Errorf("execute step %s: %w", step.Key, execErr)
 			}
 
 			if err := s.store.UpdateStepRunStatus(ctx, runID, step.ID, models.RunStatusCompleted, ""); err != nil {
@@ -103,4 +112,30 @@ func readyStepKeys(g *dag.Graph, completed, queued map[string]bool) []string {
 		}
 	}
 	return ready
+}
+
+func maxRetriesForStep(step models.Step) int {
+	if len(step.Config) == 0 {
+		return 0
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return 0
+	}
+
+	raw, ok := cfg["retry_count"]
+	if !ok {
+		return 0
+	}
+
+	switch v := raw.(type) {
+	case float64:
+		if v < 0 {
+			return 0
+		}
+		return int(v)
+	default:
+		return 0
+	}
 }

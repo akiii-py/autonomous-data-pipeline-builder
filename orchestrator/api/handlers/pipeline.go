@@ -139,7 +139,13 @@ func (h *PipelineHandler) PipelineStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, err := h.Store.GetLatestRunStatus(r.Context(), id)
+	runID := r.URL.Query().Get("run_id")
+	var status *models.PipelineStatusResponse
+	if runID != "" {
+		status, err = h.Store.GetRunStatusByID(r.Context(), id, runID)
+	} else {
+		status, err = h.Store.GetLatestRunStatus(r.Context(), id)
+	}
 	if err != nil {
 		log.Printf("pipeline status: %v", err)
 		http.Error(w, `{"error":"failed to fetch pipeline status"}`, http.StatusInternalServerError)

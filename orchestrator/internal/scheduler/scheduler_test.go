@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/akshat/pipeline-orchestrator/internal/dag"
+	"github.com/akshat/pipeline-orchestrator/internal/models"
 )
 
 func TestReadyStepKeys(t *testing.T) {
@@ -36,5 +37,48 @@ func TestReadyStepKeys(t *testing.T) {
 	ready = readyStepKeys(g, completed, map[string]bool{})
 	if len(ready) != 1 || ready[0] != "join" {
 		t.Fatalf("expected join ready after dependencies complete, got %#v", ready)
+	}
+}
+
+func TestMaxRetriesForStep(t *testing.T) {
+	tests := []struct {
+		name string
+		step models.Step
+		want int
+	}{
+		{
+			name: "no config",
+			step: models.Step{},
+			want: 0,
+		},
+		{
+			name: "valid retry_count",
+			step: models.Step{Config: []byte(`{"retry_count": 2}`)},
+			want: 2,
+		},
+		{
+			name: "negative retry_count",
+			step: models.Step{Config: []byte(`{"retry_count": -1}`)},
+			want: 0,
+		},
+		{
+			name: "invalid retry_count type",
+			step: models.Step{Config: []byte(`{"retry_count": "x"}`)},
+			want: 0,
+		},
+		{
+			name: "invalid json",
+			step: models.Step{Config: []byte(`{"retry_count":`)},
+			want: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := maxRetriesForStep(tc.step)
+			if got != tc.want {
+				t.Fatalf("expected %d retries, got %d", tc.want, got)
+			}
+		})
 	}
 }
