@@ -2,8 +2,12 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict
 
-from worker.errors import WorkerExecutionError
-from worker.runner import execute_step
+try:
+    from executor.worker.errors import WorkerExecutionError
+    from executor.worker.runner import execute_step
+except ImportError:
+    from worker.errors import WorkerExecutionError
+    from worker.runner import execute_step
 
 
 class WorkerHandler(BaseHTTPRequestHandler):

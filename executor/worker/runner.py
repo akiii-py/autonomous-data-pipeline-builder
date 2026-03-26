@@ -1,9 +1,15 @@
 from typing import Any, Dict
 
-from connectors import file_io, http_api, postgres
-from transformations.ops import apply_transform
-from worker.artifacts import get_artifact, put_artifact
-from worker.errors import WorkerExecutionError
+try:
+    from executor.connectors import file_io, http_api, postgres
+    from executor.transformations.ops import apply_transform
+    from executor.worker.artifacts import get_artifact, put_artifact
+    from executor.worker.errors import WorkerExecutionError
+except ImportError:
+    from connectors import file_io, http_api, postgres
+    from transformations.ops import apply_transform
+    from worker.artifacts import get_artifact, put_artifact
+    from worker.errors import WorkerExecutionError
 
 
 def execute_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
@@ -16,7 +22,10 @@ def execute_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
 
     if step_type == "extract":
         connector = _connector(config)
-        result = connector["extract"](config)
+        try:
+            result = connector["extract"](config)
+        except Exception as exc:
+            raise WorkerExecutionError(f"extract failed for {step_key}: {exc}") from exc
         put_artifact(run_id, step_key, result)
         return {"step_key": step_key, "rows": _len_if_list(result)}
 
@@ -27,7 +36,10 @@ def execute_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
         data = get_artifact(run_id, source)
         if data is None:
             raise WorkerExecutionError(f"missing upstream artifact: {source}")
-        result = apply_transform(data, config)
+        try:
+            result = apply_transform(data, config)
+        except Exception as exc:
+            raise WorkerExecutionError(f"transform failed for {step_key}: {exc}") from exc
         put_artifact(run_id, step_key, result)
         return {"step_key": step_key, "rows": _len_if_list(result)}
 
@@ -39,7 +51,10 @@ def execute_step(run_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
         if data is None:
             raise WorkerExecutionError(f"missing upstream artifact: {source}")
         connector = _connector(config)
-        result = connector["load"](data, config)
+        try:
+            result = connector["load"](data, config)
+        except Exception as exc:
+            raise WorkerExecutionError(f"load failed for {step_key}: {exc}") from exc
         put_artifact(run_id, step_key, result)
         return {"step_key": step_key, "result": result}
 
