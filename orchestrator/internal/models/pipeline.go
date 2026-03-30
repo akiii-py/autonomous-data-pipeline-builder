@@ -77,6 +77,42 @@ type PipelineStatusResponse struct {
 	Steps      []StepRunStatus `json:"steps,omitempty"`
 }
 
+type PipelineRunHistoryItem struct {
+	ID             string     `json:"id"`
+	PipelineID     string     `json:"pipeline_id"`
+	Status         string     `json:"status"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	TotalSteps     int        `json:"total_steps"`
+	CompletedSteps int        `json:"completed_steps"`
+	FailedSteps    int        `json:"failed_steps"`
+}
+
+type RunEvent struct {
+	ID         string          `json:"id"`
+	PipelineID string          `json:"pipeline_id"`
+	RunID      string          `json:"run_id,omitempty"`
+	StepID     string          `json:"step_id,omitempty"`
+	StepKey    string          `json:"step_key,omitempty"`
+	Level      string          `json:"level"`
+	EventType  string          `json:"event_type"`
+	Message    string          `json:"message"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type MetricsResponse struct {
+	PipelinesTotal   int64   `json:"pipelines_total"`
+	RunsTotal        int64   `json:"runs_total"`
+	RunsRunning      int64   `json:"runs_running"`
+	RunsCompleted    int64   `json:"runs_completed"`
+	RunsFailed       int64   `json:"runs_failed"`
+	StepRunsFailed   int64   `json:"step_runs_failed"`
+	AvgRunDurationS  float64 `json:"avg_run_duration_s"`
+	GeneratedAtEpoch int64   `json:"generated_at_epoch"`
+}
+
 const (
 	StatusDraft  = "draft"
 	StatusActive = "active"

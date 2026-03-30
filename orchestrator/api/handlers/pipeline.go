@@ -114,6 +114,20 @@ func (h *PipelineHandler) RunPipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.Store.CreateRunEvent(
+		r.Context(),
+		id,
+		run.ID,
+		"",
+		"",
+		"info",
+		"run_queued",
+		"pipeline run queued from API",
+		map[string]interface{}{"source": "api"},
+	); err != nil {
+		log.Printf("create run event: %v", err)
+	}
+
 	go func(pipelineID, runID string) {
 		if err := h.Scheduler.ExecuteRun(context.Background(), pipelineID, runID); err != nil {
 			log.Printf("execute run failed (pipeline=%s run=%s): %v", pipelineID, runID, err)

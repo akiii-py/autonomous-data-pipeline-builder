@@ -31,6 +31,7 @@ func RunMigrations(db *sql.DB) error {
 	migrations := []string{
 		migrationCreatePipelines,
 		migrationPhaseTwo,
+		migrationPhaseFive,
 	}
 
 	for i, m := range migrations {
@@ -97,4 +98,23 @@ CREATE TABLE IF NOT EXISTS step_runs (
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline_id ON pipeline_runs(pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_step_runs_run_id ON step_runs(pipeline_run_id);
+`
+
+const migrationPhaseFive = `
+CREATE TABLE IF NOT EXISTS pipeline_run_events (
+	id          TEXT PRIMARY KEY,
+	pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+	run_id      TEXT REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+	step_id     TEXT REFERENCES pipeline_steps(id) ON DELETE SET NULL,
+	step_key    TEXT NOT NULL DEFAULT '',
+	level       TEXT NOT NULL,
+	event_type  TEXT NOT NULL,
+	message     TEXT NOT NULL,
+	metadata    JSONB NOT NULL DEFAULT '{}',
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_events_pipeline_id ON pipeline_run_events(pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON pipeline_run_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_events_created_at ON pipeline_run_events(created_at DESC);
 `

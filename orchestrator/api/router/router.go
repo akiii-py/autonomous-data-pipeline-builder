@@ -44,6 +44,11 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 	// Pipeline execution
 	mux.HandleFunc("POST /api/v1/pipelines/{id}/run", ph.RunPipeline)
 	mux.HandleFunc("GET /api/v1/pipelines/{id}/status", ph.PipelineStatus)
+	mux.HandleFunc("GET /api/v1/pipelines/{id}/runs", ph.PipelineRuns)
+	mux.HandleFunc("GET /api/v1/pipelines/{id}/events", ph.PipelineRunEvents)
+
+	// Monitoring and metrics
+	mux.HandleFunc("GET /api/v1/metrics", ph.Metrics)
 
 	// NLP request interpretation — user sends natural language, gets a pipeline spec
 	mux.HandleFunc("POST /api/v1/interpret", handlers.InterpretRequest)
