@@ -1,125 +1,171 @@
 # Autonomous Data Pipeline Builder
 
-An intelligent platform that turns natural-language data requests into executable data pipelines.
+An intelligent platform that turns natural-language data requests into executable DAG-based data pipelines.
 
-## What This Project Does
+## Overview
 
-The Autonomous Data Pipeline Builder is designed to:
+This project provides:
 
-- Interpret user data workflow requests
-- Generate pipeline workflows as DAGs (Directed Acyclic Graphs)
-- Orchestrate execution across worker nodes
-- Monitor execution status and recover from failures
+- A Go-based orchestrator API for pipeline lifecycle management.
+- DAG validation and dependency-aware scheduling.
+- Local and worker-based execution dispatch.
+- A Python execution runtime with connectors and transformations.
+- Observability APIs for run history, event timelines, and metrics.
 
-## Current Status
+## Current Implementation Status
 
-Implemented so far:
+Implemented through Phase 5:
 
-- Phase 1 (Core Orchestrator Foundation)
-  - Go HTTP server with graceful shutdown
-  - Config loading from environment variables
-  - Health and pipeline API endpoints
-  - Middleware (logging, recovery, CORS)
-  - PostgreSQL connection and initial schema migrations
-  - Pipeline CRUD persistence layer
+- Phase 1: Core orchestrator foundation
+  - HTTP server, middleware, config loading
+  - PostgreSQL connection and migrations
+  - Pipeline CRUD API and persistence
+- Phase 2: DAG engine and validation
+  - DAG graph/build utilities
+  - Dependency validation and cycle checks
+  - Stable step-key mapping
+- Phase 3: Scheduler and run lifecycle
+  - Pipeline run + step run state transitions
+  - Dependency-aware execution ordering
+  - Retry support for failed steps
+  - Dispatcher abstraction
+- Phase 4: Worker execution plane
+  - Local dispatcher and HTTP worker dispatcher mode
+  - Python worker runtime
+  - Connectors (including PostgreSQL) and transformation operations
+  - Local Postgres E2E example flow
+- Phase 5: Observability baseline
+  - Run history endpoint
+  - Run events endpoint
+  - Aggregate metrics endpoint
+  - Scheduler event emission into DB event log
 
-- Phase 2 (DAG Engine and Workflow Management)
-  - DAG graph model and topological ordering
-  - Dependency validation (including cycle detection)
-  - DAG construction from pipeline step definitions
-  - Step keys for stable dependency mapping
-  - Run-tracking schema models and migration scaffolding
-
-## Architecture Overview
-
-High-level components:
+## Architecture
 
 - Orchestrator (Go)
-  - Accepts API requests
-  - Validates and stores pipeline definitions
-  - Builds and validates DAGs
-  - Will schedule and dispatch tasks in upcoming phases
-
-- Executor (Python, scaffolded)
-  - Connectors for external sources (APIs, DBs, files)
-  - Transformations for data processing
-  - Worker runtime for task execution
-
+  - API layer: routing, handlers, middleware
+  - Core: DAG, scheduler, dispatcher, store
+  - Persistence: PostgreSQL tables for pipelines, runs, step runs, events
+- Executor (Python)
+  - Worker server for step execution
+  - Connector modules for data sources/sinks
+  - Transformation operations
 - UI (scaffolded)
-  - Dashboard and pipeline visualization
+  - Reserved for pipeline builder and monitoring dashboard
 
-## Repository Structure
+## Repository Layout
 
 - orchestrator/
-  - cmd/server: service entrypoint
-  - api: handlers, router, middleware
-  - internal/config: configuration loading
-  - internal/database: DB connection and migrations
-  - internal/models: pipeline and run models
-  - internal/store: persistence layer
-  - internal/dag: DAG graph, builder, validation
-
+  - api/
+    - handlers/
+    - middleware/
+    - router/
+  - cmd/server/
+  - internal/
+    - config/
+    - dag/
+    - database/
+    - dispatcher/
+    - models/
+    - scheduler/
+    - store/
 - executor/
   - connectors/
   - transformations/
   - worker/
-
-- ui/
-- tests/
 - docs/
 - examples/
+- tests/
+- ui/
 
 ## Tech Stack
 
-- Go 1.26.x (orchestrator)
-- PostgreSQL (metadata and run tracking)
-- Python (planned worker/executor runtime)
+- Go 1.26.1 (orchestrator)
+- PostgreSQL (metadata, run tracking, event logs)
+- Python 3.x (worker runtime)
+- psycopg 3.x (PostgreSQL connector in worker)
 
-## Quick Start (Orchestrator)
+## Quick Start
 
 ### Prerequisites
 
 - Go 1.26+
 - PostgreSQL
+- Python 3.10+ (for executor components)
 
-### Environment Variables
-
-Defaults are provided in code, but you can override:
+### Environment Variables (Orchestrator)
 
 - PORT (default: 8080)
-- DATABASE_URL (default points to local postgres)
-- REDIS_URL (reserved for upcoming phases)
-- GRPC_PORT (reserved for worker communication)
-- LOG_LEVEL
-- ENVIRONMENT
+- DATABASE_URL (default: postgres://postgres:postgres@localhost:5432/pipeline?sslmode=disable)
+- REDIS_URL (reserved for future use)
+- GRPC_PORT (reserved for future NLP/worker integrations)
+- WORKER_URL (default: http://localhost:8090)
+- EXEC_MODE (default: local, options: local|worker)
+- WORKER_TIMEOUT_MS (default: 10000)
+- LOG_LEVEL (default: info)
+- ENVIRONMENT (default: development)
 
-### Run Locally
+### Run Orchestrator
 
-1. Start PostgreSQL
-2. From orchestrator directory:
+From orchestrator/:
 
 ```bash
 go mod tidy
 go run ./cmd/server
 ```
 
-On startup, migrations run automatically.
+Migrations run automatically on startup.
+
+### Run Go Tests
+
+From orchestrator/:
+
+```bash
+go test ./...
+```
+
+### Run Python Executor Tests
+
+From executor/:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m unittest discover -s tests -p "test_*.py"
+```
 
 ## API Endpoints
 
+### Health
+
 - GET /health
+
+### Pipeline Management
+
 - GET /api/v1/pipelines
 - POST /api/v1/pipelines
 - GET /api/v1/pipelines/{id}
 - DELETE /api/v1/pipelines/{id}
+
+### Execution
+
 - POST /api/v1/pipelines/{id}/run
 - GET /api/v1/pipelines/{id}/status
+  - Optional query: run_id
+
+### Observability (Phase 5)
+
+- GET /api/v1/pipelines/{id}/runs
+  - Optional query: status, limit
+- GET /api/v1/pipelines/{id}/events
+  - Optional query: run_id, limit
+- GET /api/v1/metrics
+
+### NLP Interpretation (Phase 6 Target)
+
 - POST /api/v1/interpret
-
-Notes:
-
-- Run and status endpoints are placeholders for scheduler/execution integration.
-- Pipeline creation now validates dependency graphs before insertion.
+  - Currently stubbed and returns placeholder response
 
 ## Example Pipeline Payload
 
@@ -132,44 +178,35 @@ Notes:
       "key": "extract_sales",
       "name": "Extract Sales",
       "type": "extract",
-      "config": { "source": "postgres" },
+      "config": {"source": "postgres"},
       "depends_on": []
     },
     {
       "key": "transform_sales",
       "name": "Transform Sales",
       "type": "transform",
-      "config": { "op": "aggregate" },
+      "config": {"op": "aggregate"},
       "depends_on": ["extract_sales"]
     },
     {
       "key": "load_warehouse",
       "name": "Load Warehouse",
       "type": "load",
-      "config": { "target": "s3" },
+      "config": {"target": "s3"},
       "depends_on": ["transform_sales"]
     }
   ]
 }
 ```
 
-## Roadmap
+## Next Milestone (Phase 6)
 
-- Phase 3: Scheduler and dispatcher
-- Phase 4: Python worker execution engine
-- Phase 5: Monitoring and reliability features
-- Phase 6: NLP interpretation service integration
-- Phase 7: UI/dashboard
-- Phase 8: Production hardening and scaling
+Planned in the next phase:
 
-## Contributing
-
-Contributions are welcome. For now, focus areas are:
-
-- scheduler/dispatcher implementation
-- execution state transitions
-- integration tests
-- connector and worker runtime scaffolding
+- Integrate real NLP interpretation service client
+- Confidence-gated automatic pipeline draft generation
+- Manual fallback flow for low-confidence or invalid interpretations
+- NLP-specific observability metrics/events
 
 ## License
 
