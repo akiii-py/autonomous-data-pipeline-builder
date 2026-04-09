@@ -38,6 +38,39 @@ func TestParseLimit(t *testing.T) {
 	}
 }
 
+func TestParseOffset(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{name: "default", raw: "", want: 0},
+		{name: "valid", raw: "12", want: 12},
+		{name: "invalid text", raw: "abc", wantErr: true},
+		{name: "invalid negative", raw: "-1", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseOffset(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("expected %d, got %d", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestIsValidRunStatus(t *testing.T) {
 	valid := []string{"pending", "running", "completed", "failed", "skipped"}
 	for _, s := range valid {

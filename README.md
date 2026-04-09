@@ -157,9 +157,11 @@ python -m unittest discover -s tests -p "test_*.py"
 ### Observability (Phase 5)
 
 - GET /api/v1/pipelines/{id}/runs
-  - Optional query: status, limit
+  - Optional query: status, limit, offset
 - GET /api/v1/pipelines/{id}/events
-  - Optional query: run_id, limit
+  - Optional query: run_id, limit, offset
+- GET /api/v1/pipelines/{id}/metrics
+  - Returns pipeline-scoped run metrics and top failed steps
 - GET /api/v1/metrics
 
 ### NLP Interpretation (Phase 6 Target)

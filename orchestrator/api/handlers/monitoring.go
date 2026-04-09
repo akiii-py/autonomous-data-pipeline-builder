@@ -31,13 +31,19 @@ func (h *PipelineHandler) PipelineRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	offset, err := parseOffset(r.URL.Query().Get("offset"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid offset"}`, http.StatusBadRequest)
+		return
+	}
+
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if status != "" && !isValidRunStatus(status) {
 		http.Error(w, `{"error":"invalid status filter"}`, http.StatusBadRequest)
 		return
 	}
 
-	runs, err := h.Store.ListRuns(r.Context(), pipelineID, status, limit)
+	runs, err := h.Store.ListRuns(r.Context(), pipelineID, status, limit, offset)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch run history"}`, http.StatusInternalServerError)
 		return
@@ -50,7 +56,13 @@ func (h *PipelineHandler) PipelineRuns(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"pipeline_id": pipelineID,
-		"runs":        runs,
+		"status":      status,
+		"pagination": models.Pagination{
+			Limit:    limit,
+			Offset:   offset,
+			Returned: len(runs),
+		},
+		"runs": runs,
 	})
 }
 
@@ -70,8 +82,14 @@ func (h *PipelineHandler) PipelineRunEvents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	offset, err := parseOffset(r.URL.Query().Get("offset"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid offset"}`, http.StatusBadRequest)
+		return
+	}
+
 	runID := strings.TrimSpace(r.URL.Query().Get("run_id"))
-	events, err := h.Store.ListRunEvents(r.Context(), pipelineID, runID, limit)
+	events, err := h.Store.ListRunEvents(r.Context(), pipelineID, runID, limit, offset)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch run events"}`, http.StatusInternalServerError)
 		return
@@ -85,7 +103,12 @@ func (h *PipelineHandler) PipelineRunEvents(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"pipeline_id": pipelineID,
 		"run_id":      runID,
-		"events":      events,
+		"pagination": models.Pagination{
+			Limit:    limit,
+			Offset:   offset,
+			Returned: len(events),
+		},
+		"events": events,
 	})
 }
 
@@ -94,6 +117,26 @@ func (h *PipelineHandler) Metrics(w http.ResponseWriter, r *http.Request) {
 	metrics, err := h.Store.GetMetrics(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch metrics"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// PipelineMetrics returns aggregate observability metrics for a specific pipeline.
+func (h *PipelineHandler) PipelineMetrics(w http.ResponseWriter, r *http.Request) {
+	pipelineID := r.PathValue("id")
+
+	pipeline, err := h.Store.GetByID(r.Context(), pipelineID)
+	if err != nil || pipeline == nil {
+		http.Error(w, `{"error":"pipeline not found"}`, http.StatusNotFound)
+		return
+	}
+
+	metrics, err := h.Store.GetPipelineMetrics(r.Context(), pipelineID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch pipeline metrics"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -116,6 +159,22 @@ func parseLimit(raw string, fallback, max int) (int, error) {
 	if n > max {
 		return max, nil
 	}
+	return n, nil
+}
+
+func parseOffset(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, errors.New("offset must be non-negative")
+	}
+
 	return n, nil
 }
 

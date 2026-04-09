@@ -343,7 +343,7 @@ func (s *PipelineStore) GetRunStatusByID(ctx context.Context, pipelineID, runID 
 	}, nil
 }
 
-func (s *PipelineStore) ListRuns(ctx context.Context, pipelineID, status string, limit int) ([]models.PipelineRunHistoryItem, error) {
+func (s *PipelineStore) ListRuns(ctx context.Context, pipelineID, status string, limit, offset int) ([]models.PipelineRunHistoryItem, error) {
 	query := `
 	SELECT
 		pr.id,
@@ -363,11 +363,11 @@ func (s *PipelineStore) ListRuns(ctx context.Context, pipelineID, status string,
 	if status != "" {
 		query += ` AND pr.status = $2`
 		args = append(args, status)
-		query += ` GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT $3`
-		args = append(args, limit)
+		query += ` GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT $3 OFFSET $4`
+		args = append(args, limit, offset)
 	} else {
-		query += ` GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT $2`
-		args = append(args, limit)
+		query += ` GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT $2 OFFSET $3`
+		args = append(args, limit, offset)
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -437,7 +437,7 @@ func (s *PipelineStore) CreateRunEvent(
 	return nil
 }
 
-func (s *PipelineStore) ListRunEvents(ctx context.Context, pipelineID, runID string, limit int) ([]models.RunEvent, error) {
+func (s *PipelineStore) ListRunEvents(ctx context.Context, pipelineID, runID string, limit, offset int) ([]models.RunEvent, error) {
 	query := `
 	SELECT id, pipeline_id, COALESCE(run_id, ''), COALESCE(step_id, ''), step_key, level, event_type, message, metadata, created_at
 	FROM pipeline_run_events
@@ -445,11 +445,11 @@ func (s *PipelineStore) ListRunEvents(ctx context.Context, pipelineID, runID str
 
 	args := []interface{}{pipelineID}
 	if runID != "" {
-		query += ` AND run_id = $2 ORDER BY created_at DESC LIMIT $3`
-		args = append(args, runID, limit)
+		query += ` AND run_id = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
+		args = append(args, runID, limit, offset)
 	} else {
-		query += ` ORDER BY created_at DESC LIMIT $2`
-		args = append(args, limit)
+		query += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		args = append(args, limit, offset)
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -517,6 +517,93 @@ func (s *PipelineStore) GetMetrics(ctx context.Context) (*models.MetricsResponse
 	}
 	if avg.Valid {
 		metrics.AvgRunDurationS = avg.Float64
+	}
+
+	return metrics, nil
+}
+
+func (s *PipelineStore) GetPipelineMetrics(ctx context.Context, pipelineID string) (*models.PipelineMetricsResponse, error) {
+	metrics := &models.PipelineMetricsResponse{
+		PipelineID:       pipelineID,
+		TopFailedSteps:   make([]models.StepFailureMetric, 0),
+		GeneratedAtEpoch: time.Now().UTC().Unix(),
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_id = $1`, pipelineID,
+	).Scan(&metrics.RunsTotal); err != nil {
+		return nil, fmt.Errorf("count pipeline runs: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_id = $1 AND status = $2`, pipelineID, models.RunStatusRunning,
+	).Scan(&metrics.RunsRunning); err != nil {
+		return nil, fmt.Errorf("count pipeline running runs: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_id = $1 AND status = $2`, pipelineID, models.RunStatusCompleted,
+	).Scan(&metrics.RunsCompleted); err != nil {
+		return nil, fmt.Errorf("count pipeline completed runs: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_id = $1 AND status = $2`, pipelineID, models.RunStatusFailed,
+	).Scan(&metrics.RunsFailed); err != nil {
+		return nil, fmt.Errorf("count pipeline failed runs: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		 FROM step_runs sr
+		 JOIN pipeline_runs pr ON pr.id = sr.pipeline_run_id
+		 WHERE pr.pipeline_id = $1 AND sr.status = $2`,
+		pipelineID,
+		models.RunStatusFailed,
+	).Scan(&metrics.StepRunsFailed); err != nil {
+		return nil, fmt.Errorf("count pipeline failed step runs: %w", err)
+	}
+
+	var avg sql.NullFloat64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))
+		 FROM pipeline_runs
+		 WHERE pipeline_id = $1 AND started_at IS NOT NULL AND finished_at IS NOT NULL`,
+		pipelineID,
+	).Scan(&avg); err != nil {
+		return nil, fmt.Errorf("avg pipeline run duration: %w", err)
+	}
+	if avg.Valid {
+		metrics.AvgRunDurationS = avg.Float64
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ps.step_key, ps.name, COUNT(*) AS failures
+		 FROM step_runs sr
+		 JOIN pipeline_runs pr ON pr.id = sr.pipeline_run_id
+		 JOIN pipeline_steps ps ON ps.id = sr.step_id
+		 WHERE pr.pipeline_id = $1 AND sr.status = $2
+		 GROUP BY ps.step_key, ps.name
+		 ORDER BY failures DESC, ps.step_key
+		 LIMIT 10`,
+		pipelineID,
+		models.RunStatusFailed,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pipeline failed steps: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item models.StepFailureMetric
+		if err := rows.Scan(&item.StepKey, &item.StepName, &item.Failures); err != nil {
+			return nil, fmt.Errorf("scan pipeline failed step: %w", err)
+		}
+		metrics.TopFailedSteps = append(metrics.TopFailedSteps, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pipeline failed steps: %w", err)
 	}
 
 	return metrics, nil

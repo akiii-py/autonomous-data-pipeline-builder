@@ -46,6 +46,7 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 	mux.HandleFunc("GET /api/v1/pipelines/{id}/status", ph.PipelineStatus)
 	mux.HandleFunc("GET /api/v1/pipelines/{id}/runs", ph.PipelineRuns)
 	mux.HandleFunc("GET /api/v1/pipelines/{id}/events", ph.PipelineRunEvents)
+	mux.HandleFunc("GET /api/v1/pipelines/{id}/metrics", ph.PipelineMetrics)
 
 	// Monitoring and metrics
 	mux.HandleFunc("GET /api/v1/metrics", ph.Metrics)

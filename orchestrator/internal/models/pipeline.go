@@ -113,6 +113,30 @@ type MetricsResponse struct {
 	GeneratedAtEpoch int64   `json:"generated_at_epoch"`
 }
 
+type Pagination struct {
+	Limit    int `json:"limit"`
+	Offset   int `json:"offset"`
+	Returned int `json:"returned"`
+}
+
+type StepFailureMetric struct {
+	StepKey  string `json:"step_key"`
+	StepName string `json:"step_name"`
+	Failures int64  `json:"failures"`
+}
+
+type PipelineMetricsResponse struct {
+	PipelineID       string              `json:"pipeline_id"`
+	RunsTotal        int64               `json:"runs_total"`
+	RunsRunning      int64               `json:"runs_running"`
+	RunsCompleted    int64               `json:"runs_completed"`
+	RunsFailed       int64               `json:"runs_failed"`
+	StepRunsFailed   int64               `json:"step_runs_failed"`
+	AvgRunDurationS  float64             `json:"avg_run_duration_s"`
+	TopFailedSteps   []StepFailureMetric `json:"top_failed_steps"`
+	GeneratedAtEpoch int64               `json:"generated_at_epoch"`
+}
+
 const (
 	StatusDraft  = "draft"
 	StatusActive = "active"
