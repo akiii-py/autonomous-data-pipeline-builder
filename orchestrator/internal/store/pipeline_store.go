@@ -437,20 +437,32 @@ func (s *PipelineStore) CreateRunEvent(
 	return nil
 }
 
-func (s *PipelineStore) ListRunEvents(ctx context.Context, pipelineID, runID string, limit, offset int) ([]models.RunEvent, error) {
+func (s *PipelineStore) ListRunEvents(ctx context.Context, pipelineID, runID, level, eventType string, limit, offset int) ([]models.RunEvent, error) {
 	query := `
 	SELECT id, pipeline_id, COALESCE(run_id, ''), COALESCE(step_id, ''), step_key, level, event_type, message, metadata, created_at
 	FROM pipeline_run_events
 	WHERE pipeline_id = $1`
 
 	args := []interface{}{pipelineID}
+	argPos := 2
 	if runID != "" {
-		query += ` AND run_id = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
-		args = append(args, runID, limit, offset)
-	} else {
-		query += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
-		args = append(args, limit, offset)
+		query += fmt.Sprintf(` AND run_id = $%d`, argPos)
+		args = append(args, runID)
+		argPos++
 	}
+	if level != "" {
+		query += fmt.Sprintf(` AND level = $%d`, argPos)
+		args = append(args, level)
+		argPos++
+	}
+	if eventType != "" {
+		query += fmt.Sprintf(` AND event_type = $%d`, argPos)
+		args = append(args, eventType)
+		argPos++
+	}
+
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, argPos, argPos+1)
+	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -506,6 +518,10 @@ func (s *PipelineStore) GetMetrics(ctx context.Context) (*models.MetricsResponse
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM step_runs WHERE status = $1`, models.RunStatusFailed).Scan(&metrics.StepRunsFailed); err != nil {
 		return nil, fmt.Errorf("count failed step runs: %w", err)
 	}
+	if metrics.RunsTotal > 0 {
+		metrics.RunsSuccessRate = float64(metrics.RunsCompleted) / float64(metrics.RunsTotal)
+		metrics.RunsFailureRate = float64(metrics.RunsFailed) / float64(metrics.RunsTotal)
+	}
 
 	var avg sql.NullFloat64
 	if err := s.db.QueryRowContext(ctx,
@@ -551,6 +567,10 @@ func (s *PipelineStore) GetPipelineMetrics(ctx context.Context, pipelineID strin
 		`SELECT COUNT(*) FROM pipeline_runs WHERE pipeline_id = $1 AND status = $2`, pipelineID, models.RunStatusFailed,
 	).Scan(&metrics.RunsFailed); err != nil {
 		return nil, fmt.Errorf("count pipeline failed runs: %w", err)
+	}
+	if metrics.RunsTotal > 0 {
+		metrics.RunsSuccessRate = float64(metrics.RunsCompleted) / float64(metrics.RunsTotal)
+		metrics.RunsFailureRate = float64(metrics.RunsFailed) / float64(metrics.RunsTotal)
 	}
 
 	if err := s.db.QueryRowContext(ctx,
@@ -607,6 +627,47 @@ func (s *PipelineStore) GetPipelineMetrics(ctx context.Context, pipelineID strin
 	}
 
 	return metrics, nil
+}
+
+func (s *PipelineStore) GetPipelineFailureBreakdown(ctx context.Context, pipelineID string, limit, offset int) ([]models.StepFailureBreakdownItem, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT
+			ps.step_key,
+			ps.name,
+			COALESCE(NULLIF(sr.error, ''), '') AS error_message,
+			COUNT(*) AS failures,
+			MAX(COALESCE(sr.finished_at, sr.created_at)) AS last_failed_at
+		 FROM step_runs sr
+		 JOIN pipeline_runs pr ON pr.id = sr.pipeline_run_id
+		 JOIN pipeline_steps ps ON ps.id = sr.step_id
+		 WHERE pr.pipeline_id = $1 AND sr.status = $2
+		 GROUP BY ps.step_key, ps.name, sr.error
+		 ORDER BY failures DESC, last_failed_at DESC
+		 LIMIT $3 OFFSET $4`,
+		pipelineID,
+		models.RunStatusFailed,
+		limit,
+		offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pipeline failure breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]models.StepFailureBreakdownItem, 0)
+	for rows.Next() {
+		var item models.StepFailureBreakdownItem
+		if err := rows.Scan(&item.StepKey, &item.StepName, &item.ErrorMessage, &item.Failures, &item.LastFailedAt); err != nil {
+			return nil, fmt.Errorf("scan pipeline failure breakdown: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pipeline failure breakdown: %w", err)
+	}
+
+	return items, nil
 }
 
 func (s *PipelineStore) getSteps(ctx context.Context, pipelineID string) ([]models.Step, error) {

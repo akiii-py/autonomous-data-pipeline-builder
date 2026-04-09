@@ -159,10 +159,13 @@ python -m unittest discover -s tests -p "test_*.py"
 - GET /api/v1/pipelines/{id}/runs
   - Optional query: status, limit, offset
 - GET /api/v1/pipelines/{id}/events
-  - Optional query: run_id, limit, offset
+  - Optional query: run_id, level, event_type, limit, offset
 - GET /api/v1/pipelines/{id}/metrics
-  - Returns pipeline-scoped run metrics and top failed steps
+  - Returns pipeline-scoped run metrics, success/failure rates, and top failed steps
+- GET /api/v1/pipelines/{id}/failure-breakdown
+  - Returns grouped step-level failure insights (step, error, frequency, last occurrence)
 - GET /api/v1/metrics
+  - Returns global orchestrator metrics and success/failure rates
 
 ### NLP Interpretation (Phase 6 Target)
 

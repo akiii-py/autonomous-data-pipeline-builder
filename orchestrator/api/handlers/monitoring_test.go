@@ -86,3 +86,19 @@ func TestIsValidRunStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidEventLevel(t *testing.T) {
+	valid := []string{"info", "warn", "error"}
+	for _, s := range valid {
+		if !isValidEventLevel(s) {
+			t.Fatalf("expected level %q to be valid", s)
+		}
+	}
+
+	invalid := []string{"", "warning", "fatal", "INFO"}
+	for _, s := range invalid {
+		if isValidEventLevel(s) {
+			t.Fatalf("expected level %q to be invalid", s)
+		}
+	}
+}
