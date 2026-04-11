@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/akshat/pipeline-orchestrator/internal/interpreter"
 	"github.com/akshat/pipeline-orchestrator/internal/models"
 	"github.com/akshat/pipeline-orchestrator/internal/scheduler"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
@@ -14,8 +15,10 @@ import (
 
 // PipelineHandler holds dependencies for pipeline endpoints.
 type PipelineHandler struct {
-	Store     *store.PipelineStore
-	Scheduler *scheduler.Scheduler
+	Store            *store.PipelineStore
+	Scheduler        *scheduler.Scheduler
+	Interpreter      interpreter.Service
+	NLPMinConfidence float64
 }
 
 // ListPipelines returns all pipelines for the authenticated user.

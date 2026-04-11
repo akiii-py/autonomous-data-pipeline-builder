@@ -14,7 +14,7 @@ This project provides:
 
 ## Current Implementation Status
 
-Implemented through Phase 5:
+Implemented through Phase 6:
 
 - Phase 1: Core orchestrator foundation
   - HTTP server, middleware, config loading
@@ -39,6 +39,11 @@ Implemented through Phase 5:
   - Run events endpoint
   - Aggregate metrics endpoint
   - Scheduler event emission into DB event log
+- Phase 6: NLP interpretation and safe fallback
+  - HTTP NLP client integration for natural-language pipeline draft generation
+  - Confidence-gated auto mode
+  - DAG and step-type validation before accepting generated drafts
+  - Deterministic manual fallback draft when NLP is unavailable/low-confidence/invalid
 
 ## Architecture
 
@@ -66,6 +71,7 @@ Implemented through Phase 5:
     - dag/
     - database/
     - dispatcher/
+    - interpreter/
     - models/
     - scheduler/
     - store/
@@ -102,6 +108,9 @@ Implemented through Phase 5:
 - WORKER_URL (default: http://localhost:8090)
 - EXEC_MODE (default: local, options: local|worker)
 - WORKER_TIMEOUT_MS (default: 10000)
+- NLP_SERVICE_URL (default: http://localhost:8091)
+- NLP_TIMEOUT_MS (default: 8000)
+- NLP_MIN_CONFIDENCE (default: 0.70)
 - LOG_LEVEL (default: info)
 - ENVIRONMENT (default: development)
 
@@ -126,13 +135,13 @@ go test ./...
 
 ### Run Python Executor Tests
 
-From executor/:
+From repository root:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python -m unittest discover -s tests -p "test_*.py"
+pip install -r executor/requirements.txt
+PYTHONPATH="$PWD" python -m unittest discover -s executor/tests -p "test_*.py"
 ```
 
 ## API Endpoints
@@ -167,10 +176,12 @@ python -m unittest discover -s tests -p "test_*.py"
 - GET /api/v1/metrics
   - Returns global orchestrator metrics and success/failure rates
 
-### NLP Interpretation (Phase 6 Target)
+### NLP Interpretation (Phase 6)
 
 - POST /api/v1/interpret
-  - Currently stubbed and returns placeholder response
+  - Accepts natural language query and returns either:
+    - mode=auto with validated pipeline_draft
+    - mode=manual_fallback with fallback_reason and safe draft template
 
 ## Example Pipeline Payload
 
@@ -204,14 +215,13 @@ python -m unittest discover -s tests -p "test_*.py"
 }
 ```
 
-## Next Milestone (Phase 6)
+## Next Milestone
 
 Planned in the next phase:
 
-- Integrate real NLP interpretation service client
-- Confidence-gated automatic pipeline draft generation
-- Manual fallback flow for low-confidence or invalid interpretations
-- NLP-specific observability metrics/events
+- Phase 6.5: security baseline (API key auth)
+- Phase 7a: developer experience and API ergonomics
+- Phase 7b: UI/dashboard implementation
 
 ## License
 

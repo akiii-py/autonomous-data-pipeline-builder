@@ -10,6 +10,7 @@ import (
 	"github.com/akshat/pipeline-orchestrator/api/middleware"
 	"github.com/akshat/pipeline-orchestrator/internal/config"
 	"github.com/akshat/pipeline-orchestrator/internal/dispatcher"
+	"github.com/akshat/pipeline-orchestrator/internal/interpreter"
 	"github.com/akshat/pipeline-orchestrator/internal/scheduler"
 	"github.com/akshat/pipeline-orchestrator/internal/store"
 )
@@ -27,9 +28,13 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 		d = dispatcher.NewLocalDispatcher()
 	}
 
+	interp := interpreter.NewHTTPClient(cfg.NLPServiceURL, time.Duration(cfg.NLPTimeoutMS)*time.Millisecond)
+
 	ph := &handlers.PipelineHandler{
-		Store:     ps,
-		Scheduler: scheduler.New(ps, d),
+		Store:            ps,
+		Scheduler:        scheduler.New(ps, d),
+		Interpreter:      interp,
+		NLPMinConfidence: cfg.NLPMinConfidence,
 	}
 
 	// Health check — used by Docker/K8s to verify the service is alive
@@ -53,7 +58,7 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 	mux.HandleFunc("GET /api/v1/metrics", ph.Metrics)
 
 	// NLP request interpretation — user sends natural language, gets a pipeline spec
-	mux.HandleFunc("POST /api/v1/interpret", handlers.InterpretRequest)
+	mux.HandleFunc("POST /api/v1/interpret", ph.InterpretRequest)
 
 	// Wrap with middleware chain: logging → recovery → CORS
 	var handler http.Handler = mux
