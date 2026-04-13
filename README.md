@@ -14,7 +14,7 @@ This project provides:
 
 ## Current Implementation Status
 
-Implemented through Phase 6:
+Implemented through Phase 6.5:
 
 - Phase 1: Core orchestrator foundation
   - HTTP server, middleware, config loading
@@ -44,6 +44,10 @@ Implemented through Phase 6:
   - Confidence-gated auto mode
   - DAG and step-type validation before accepting generated drafts
   - Deterministic manual fallback draft when NLP is unavailable/low-confidence/invalid
+- Phase 6.5: API security baseline
+  - API key middleware for /api routes
+  - Auth via X-API-Key or Authorization: Bearer <key>
+  - Health endpoint and CORS preflight remain public
 
 ## Architecture
 
@@ -105,6 +109,7 @@ Implemented through Phase 6:
 - DATABASE_URL (default: postgres://postgres:postgres@localhost:5432/pipeline?sslmode=disable)
 - REDIS_URL (reserved for future use)
 - GRPC_PORT (reserved for future NLP/worker integrations)
+- API_KEY (optional; when set, protects /api endpoints)
 - WORKER_URL (default: http://localhost:8090)
 - EXEC_MODE (default: local, options: local|worker)
 - WORKER_TIMEOUT_MS (default: 10000)
@@ -149,6 +154,14 @@ PYTHONPATH="$PWD" python -m unittest discover -s executor/tests -p "test_*.py"
 ### Health
 
 - GET /health
+
+### Security (Phase 6.5)
+
+- If API_KEY is configured, all /api/v1 endpoints require authentication.
+- Send either:
+  - Header: X-API-Key: <your-key>
+  - Header: Authorization: Bearer <your-key>
+- /health remains unauthenticated for liveness checks.
 
 ### Pipeline Management
 
@@ -219,7 +232,6 @@ PYTHONPATH="$PWD" python -m unittest discover -s executor/tests -p "test_*.py"
 
 Planned in the next phase:
 
-- Phase 6.5: security baseline (API key auth)
 - Phase 7a: developer experience and API ergonomics
 - Phase 7b: UI/dashboard implementation
 

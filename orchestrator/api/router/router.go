@@ -62,6 +62,7 @@ func New(db *sql.DB, cfg *config.Config) http.Handler {
 
 	// Wrap with middleware chain: logging → recovery → CORS
 	var handler http.Handler = mux
+	handler = middleware.APIKey(handler, cfg.APIKey)
 	handler = middleware.Logger(handler)
 	handler = middleware.Recovery(handler)
 	handler = middleware.CORS(handler)

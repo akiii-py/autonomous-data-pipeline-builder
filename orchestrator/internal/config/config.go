@@ -12,6 +12,7 @@ type Config struct {
 	DatabaseURL      string  // PostgreSQL connection string
 	RedisURL         string  // Redis connection string for caching/queues
 	GRPCPort         int     // Port for gRPC communication with Python workers
+	APIKey           string  // API key used to protect /api routes (Phase 6.5)
 	WorkerURL        string  // Worker service base URL (Phase 4)
 	ExecMode         string  // local or worker
 	WorkerTimeoutMS  int     // Worker call timeout in milliseconds
@@ -39,6 +40,7 @@ func Load() (*Config, error) {
 		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/pipeline?sslmode=disable"),
 		RedisURL:         getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		GRPCPort:         grpcPort,
+		APIKey:           getEnv("API_KEY", ""),
 		WorkerURL:        getEnv("WORKER_URL", "http://localhost:8090"),
 		ExecMode:         getEnv("EXEC_MODE", "local"),
 		WorkerTimeoutMS:  mustGetEnvInt("WORKER_TIMEOUT_MS", 10000),
