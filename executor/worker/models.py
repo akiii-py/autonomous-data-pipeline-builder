@@ -139,9 +139,28 @@ class StepResult:
 
 @dataclass
 class ExecuteResponse:
+    """Wire reply. An error reply still says which execution it is about:
+    run_id and step_key are spread into the error path too, so the orchestrator
+    never learns that something broke without learning what (item 14)."""
+
     status: str
     result: Optional[StepResult] = None
     error: Optional[str] = None
+    run_id: str = ""
+    step_key: str = ""
+
+    @classmethod
+    def error_for(cls, raw: Any, error: str) -> "ExecuteResponse":
+        """Build an error reply for a request that may not have parsed.
+        Identity is pulled best-effort from the raw body; missing fields stay
+        empty rather than failing a reply that is already reporting a failure."""
+        run_id, step_key = "", ""
+        if isinstance(raw, dict):
+            run_id = raw.get("run_id") if isinstance(raw.get("run_id"), str) else ""
+            step = raw.get("step")
+            if isinstance(step, dict) and isinstance(step.get("key"), str):
+                step_key = step["key"]
+        return cls(status="error", error=error, run_id=run_id, step_key=step_key)
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"status": self.status}
@@ -149,6 +168,10 @@ class ExecuteResponse:
             out["result"] = self.result.to_dict()
         if self.error:
             out["error"] = self.error
+        if self.run_id:
+            out["run_id"] = self.run_id
+        if self.step_key:
+            out["step_key"] = self.step_key
         return out
 
 

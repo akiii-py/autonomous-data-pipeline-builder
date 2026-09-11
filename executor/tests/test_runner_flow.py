@@ -177,3 +177,44 @@ class WireContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_error_reply_carries_execution_identity(self):
+        # A failed call still has to say which execution failed (item 14).
+        from executor.worker.models import ExecuteResponse
+
+        raw = {"run_id": "run-1", "step": {"key": "extract", "type": "extract"}}
+        out = ExecuteResponse.error_for(raw, "boom").to_dict()
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["run_id"], "run-1")
+        self.assertEqual(out["step_key"], "extract")
+
+        # Unparseable body: identity is simply absent, never a crash.
+        out = ExecuteResponse.error_for("not a dict", "invalid body").to_dict()
+        self.assertNotIn("run_id", out)
+        self.assertNotIn("step_key", out)
+
+
+class WorkerConfigTest(unittest.TestCase):
+    def _cfg(self, **overrides):
+        from executor.worker.config import WorkerConfig
+
+        base = dict(
+            host="127.0.0.1", port=0, auth_token="", database_url="",
+            allowed_hosts=[], allowed_schemes=["https"], allowed_paths=[],
+            allowed_dsn_refs=[], unrestricted_connectors=False,
+            insecure_dev=False, max_threads=1,
+        )
+        base.update(overrides)
+        return WorkerConfig(**base)
+
+    def test_worker_refuses_to_start_unauthenticated_by_default(self):
+        from executor.worker.config import InsecureConfigError, validate
+
+        with self.assertRaises(InsecureConfigError):
+            validate(self._cfg())
+        with self.assertRaises(InsecureConfigError):
+            validate(self._cfg(auth_token="t", unrestricted_connectors=True))
+
+        validate(self._cfg(auth_token="t"))
+        validate(self._cfg(insecure_dev=True))
+        validate(self._cfg(auth_token="t", unrestricted_connectors=True, insecure_dev=True))

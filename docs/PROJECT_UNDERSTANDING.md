@@ -310,13 +310,14 @@ never read.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `WORKER_HOST` / `WORKER_PORT` | `127.0.0.1` / 8090 | binds to loopback by default |
-| `WORKER_TOKEN` | *(empty)* | required header; empty means unauthenticated and warns |
+| `WORKER_TOKEN` | *(empty)* | required header; the worker refuses to start without it unless `WORKER_INSECURE_DEV=1` |
 | `WORKER_DATABASE_URL` | falls back to `DATABASE_URL` | artifacts + ledger; unset → in-memory fallback |
 | `WORKER_ALLOWED_HOSTS` | *(empty)* | http connector host allowlist |
 | `WORKER_ALLOWED_SCHEMES` | `https` | http connector scheme allowlist |
 | `WORKER_ALLOWED_PATHS` | *(empty)* | file connector path prefixes |
 | `WORKER_ALLOWED_DSN_REFS` | *(empty)* | env var names the postgres connector may resolve |
-| `WORKER_UNRESTRICTED_CONNECTORS` | `false` | disables allowlists; local dev only |
+| `WORKER_UNRESTRICTED_CONNECTORS` | `false` | disables allowlists; requires `WORKER_INSECURE_DEV=1` |
+| `WORKER_INSECURE_DEV` | `false` | explicit opt-in to run unauthenticated / unrestricted on a local machine |
 | `WORKER_MAX_THREADS` | 8 | |
 
 ### Commands

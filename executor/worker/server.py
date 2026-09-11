@@ -68,18 +68,19 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self._send(401, {"status": "error", "error": "unauthorized"})
             return
 
+        payload: Any = None
         try:
             payload = self._json_body()
             req = ExecuteRequest.parse(payload)
         except WorkerExecutionError as exc:
-            self._send(400, ExecuteResponse(status="error", error=str(exc)).to_dict())
+            self._send(400, ExecuteResponse.error_for(payload, str(exc)).to_dict())
             return
         except (ValueError, UnicodeDecodeError) as exc:
-            self._send(400, ExecuteResponse(status="error", error=f"invalid body: {exc}").to_dict())
+            self._send(400, ExecuteResponse.error_for(payload, f"invalid body: {exc}").to_dict())
             return
 
         if self.runner is None:
-            self._send(503, ExecuteResponse(status="error", error="worker not initialised").to_dict())
+            self._send(503, ExecuteResponse.error_for(payload, "worker not initialised").to_dict())
             return
 
         # execute() classifies and returns rather than raising, so a failed step
@@ -90,6 +91,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
             status="error" if result.failed else "ok",
             result=result,
             error=result.error_message or None,
+            run_id=result.run_id,
+            step_key=result.step_key,
         )
         self._send(200, response.to_dict())
 
@@ -154,6 +157,7 @@ def build_runner(cfg: worker_config.WorkerConfig) -> StepRunner:
 
 def build_server(cfg: Optional[worker_config.WorkerConfig] = None) -> ThreadingHTTPServer:
     cfg = cfg or worker_config.load()
+    worker_config.validate(cfg)
 
     handler = type(
         "ConfiguredWorkerHandler",
@@ -170,8 +174,14 @@ def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     cfg = worker_config.load()
+    try:
+        worker_config.validate(cfg)
+    except worker_config.InsecureConfigError as exc:
+        logger.error("refusing to start: %s", exc)
+        raise SystemExit(2) from exc
+
     if not cfg.auth_token:
-        logger.warning("WORKER_TOKEN is not set: /execute is unauthenticated")
+        logger.warning("WORKER_INSECURE_DEV is set: /execute is unauthenticated")
     if cfg.unrestricted_connectors:
         logger.warning("WORKER_UNRESTRICTED_CONNECTORS is set: connector allowlists are disabled")
 

@@ -6,6 +6,7 @@ must be in the registry's allowlist (rule 6.4, D-05).
 """
 
 import os
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 import psycopg
@@ -29,6 +30,10 @@ def extract(config: Dict[str, Any], allowlist: Any = None) -> Any:
 
     try:
         with psycopg.connect(dsn, row_factory=dict_row) as conn:
+            # The keyword guard above is the fast, informative check. This is
+            # the one the database enforces: a read-only transaction rejects
+            # any write the guard did not anticipate.
+            conn.read_only = True
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
@@ -76,10 +81,54 @@ def load(payload: Any, config: Dict[str, Any], allowlist: Any = None) -> Dict[st
     return {"table": table, "inserted": len(rows)}
 
 
+# Keywords that make a statement something other than a read. Checked as whole
+# tokens after comments, string literals and quoted identifiers are removed, so
+# a CTE wrapping an INSERT or a stacked statement is caught, while a column
+# called "update" or a string containing "delete" is not.
+_WRITE_KEYWORDS = frozenset(
+    {
+        "insert", "update", "delete", "merge", "truncate", "copy",
+        "create", "alter", "drop", "grant", "revoke", "comment",
+        "call", "do", "execute", "prepare", "deallocate",
+        "set", "reset", "lock", "vacuum", "analyze", "analyse",
+        "cluster", "reindex", "refresh", "listen", "notify",
+        "begin", "commit", "rollback", "savepoint", "release",
+        "security", "into",
+    }
+)
+
+_SQL_NOISE = re.compile(
+    r"""
+    --[^\n]*             # line comment
+  | /\*.*?\*/            # block comment
+  | '(?:[^']|'')*'       # string literal
+  | "(?:[^"]|"")*"       # quoted identifier
+  | \$([A-Za-z_]*)\$.*?\$\1\$   # dollar-quoted string
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
 def _reject_non_select(query: str) -> None:
-    stripped = query.lstrip().lower()
-    if not (stripped.startswith("select") or stripped.startswith("with")):
+    """Extract queries are reads. This is a textual guard, not a parser: it
+    keeps the obvious cases (DML, DDL, stacked statements, writes hidden in a
+    CTE) out with a clear error. The read-only transaction in extract() is
+    what actually enforces it."""
+    bare = _SQL_NOISE.sub(" ", query).strip()
+    lowered = bare.lower()
+    if not (lowered.startswith("select") or lowered.startswith("with")):
         raise PermanentError("postgres extract is restricted to SELECT")
+
+    # Only one statement. A trailing semicolon is fine; a second statement is not.
+    if ";" in lowered.rstrip(" ;\t\n"):
+        raise PermanentError("postgres extract accepts a single statement")
+
+    tokens = set(re.findall(r"[a-z_]+", lowered))
+    found = sorted(tokens & _WRITE_KEYWORDS)
+    if found:
+        raise PermanentError(
+            f"postgres extract is restricted to SELECT; found {', '.join(found)}"
+        )
 
 
 def _dsn_from_config(config: Dict[str, Any], allowlist: Any) -> str:

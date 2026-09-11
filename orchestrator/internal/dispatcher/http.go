@@ -28,6 +28,10 @@ type executeResponse struct {
 	Status string             `json:"status"`
 	Error  string             `json:"error,omitempty"`
 	Result *models.StepResult `json:"result,omitempty"`
+	// RunID and StepKey are present on error replies too, so a failure names
+	// the execution it belongs to even when there is no Result (item 14).
+	RunID   string `json:"run_id,omitempty"`
+	StepKey string `json:"step_key,omitempty"`
 }
 
 func NewHTTPDispatcher(baseURL, authToken string, timeout time.Duration) *HTTPDispatcher {
@@ -89,6 +93,15 @@ func (d *HTTPDispatcher) ExecuteStep(ctx context.Context, req models.StepRequest
 	if err := json.Unmarshal(body, &out); err != nil {
 		return d.failure(req, models.ErrorClassPermanent,
 			fmt.Sprintf("decode worker response (status %d): %v", resp.StatusCode, err)), nil
+	}
+
+	// The worker echoes the execution identity on every reply. A reply that
+	// names a different execution is a routing fault, not a step outcome, and
+	// retrying it would only repeat the confusion.
+	if (out.RunID != "" && out.RunID != req.RunID) || (out.StepKey != "" && out.StepKey != req.Step.Key) {
+		return d.failure(req, models.ErrorClassPermanent,
+			fmt.Sprintf("worker replied for run %q step %q, expected run %q step %q",
+				out.RunID, out.StepKey, req.RunID, req.Step.Key)), nil
 	}
 
 	// 5xx is the worker itself failing, which is worth another attempt. 4xx is a

@@ -46,6 +46,28 @@ class PostgresConfigTest(unittest.TestCase):
         finally:
             del os.environ["PG_TEST_REF"]
 
+    def test_write_guard_sees_through_ctes_comments_and_stacking(self):
+        reject = postgres._reject_non_select
+        for bad in [
+            "WITH x AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM x",
+            "SELECT 1; DROP TABLE users",
+            "SELECT 1; -- harmless\nDELETE FROM t",
+            "SELECT * FROM t /* */ FOR UPDATE",
+            "SELECT * INTO new_t FROM t",
+        ]:
+            with self.assertRaises(PermanentError, msg=bad):
+                reject(bad)
+
+        # Keywords inside strings, comments or quoted identifiers are data, not SQL.
+        for ok in [
+            "SELECT * FROM t WHERE note = 'please delete me'",
+            'SELECT "update", "insert" FROM audit',
+            "SELECT 1 -- drop table nothing",
+            "SELECT $$insert into$$ AS s",
+            "WITH r AS (SELECT 1) SELECT * FROM r;",
+        ]:
+            reject(ok)
+
 
 @unittest.skipUnless(_dsn(), f"set {DSN_ENV} to run live Postgres tests")
 class PostgresConnectorTest(unittest.TestCase):
