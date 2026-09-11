@@ -19,7 +19,7 @@ Scope: static read of every source file in `orchestrator/` and `executor/`, plus
 >
 > | Finding | Status | Where |
 > |---|---|---|
-> | F-01 unauthenticated `/execute` | Resolved | `X-Worker-Token` + per-connector allowlists in `executor/connectors/registry.py` |
+> | F-01 unauthenticated `/execute` | Resolved | `X-Worker-Token` + per-connector allowlists in `executor/connectors/registry.py`; worker refuses to start without a token unless `WORKER_INSECURE_DEV=1` |
 > | F-02 retry double-executes a load | Resolved | idempotency ledger keyed `(run_id, step_key)` |
 > | F-03 every metric measures a simulator | Resolved | `exec_mode` / `simulated` on the run row, carried into all read paths; unknown `EXEC_MODE` now fails startup |
 > | F-04 panic kills the orchestrator | Resolved | `recover()` in the scheduler and the run loop |
@@ -33,7 +33,7 @@ Scope: static read of every source file in `orchestrator/` and `executor/`, plus
 > | F-12 degradation never counted | Resolved | `degradation_events` + `/metrics` breakdown |
 > | F-13 structural-only draft validation | Resolved | two-stage validation against `catalog.Context` |
 > | F-14 unversioned migrations | Resolved | `schema_migrations` with checksums |
-> | **F-15 no e2e test, no CI, no compose** | **Open** | highest-priority remaining work |
+> | **F-15 no e2e test, no CI, no compose** | **Partly resolved** | CI in `.github/workflows/ci.yml`; e2e test and compose still open |
 > | F-16 sequential ready set | Resolved | bounded concurrency at both ends |
 > | F-17 audit log destroyed by delete cascade | Resolved | soft delete; FK cascades dropped |
 > | F-18 `GET /api/v1/pipelines` unbounded | Resolved | paginated |

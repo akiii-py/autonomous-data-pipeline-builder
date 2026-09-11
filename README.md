@@ -117,9 +117,11 @@ export EXEC_MODE=worker
 export WORKER_TOKEN=dev-secret
 ```
 
-> **Allowlists fail closed.** An unconfigured worker can reach no host, no path,
-> and no database. Set `WORKER_ALLOWED_*` for the resources you actually intend
-> to use, or `WORKER_UNRESTRICTED_CONNECTORS=true` for local development only.
+> **The worker fails closed.** It refuses to start without `WORKER_TOKEN`, and
+> an unconfigured worker can reach no host, no path, and no database. Set
+> `WORKER_ALLOWED_*` for the resources you actually intend to use. For local
+> development only, `WORKER_INSECURE_DEV=1` permits an empty token and is also
+> required to honour `WORKER_UNRESTRICTED_CONNECTORS=true`.
 
 ### 3. Create and run a pipeline
 
@@ -196,7 +198,7 @@ and the DAG is validated before anything is stored.
 
 | Type | Reads | Writes | Notes |
 | --- | --- | --- | --- |
-| `extract` | a source connector | an artifact under its `key` | queries restricted to `SELECT` |
+| `extract` | a source connector | an artifact under its `key` | one `SELECT`/`WITH` statement; DML/DDL keywords rejected, and the query runs in a read-only transaction |
 | `transform` | the artifact named by `input_from` | an artifact under its `key` | |
 | `load` | the artifact named by `input_from` | a destination connector | triggers the approval requirement |
 
@@ -319,13 +321,14 @@ a `fallback_reason` and a safe skeleton. Fallback reasons:
 | --- | --- | --- |
 | `WORKER_HOST` | `127.0.0.1` | binds to loopback by default |
 | `WORKER_PORT` | `8090` | |
-| `WORKER_TOKEN` | *(empty)* | required header; empty means open, and warns |
+| `WORKER_TOKEN` | *(empty)* | required header; the worker refuses to start without it unless `WORKER_INSECURE_DEV=1` |
 | `WORKER_DATABASE_URL` | falls back to `DATABASE_URL` | artifacts + ledger; unset → in-memory fallback |
 | `WORKER_ALLOWED_HOSTS` | *(empty)* | http connector hosts |
 | `WORKER_ALLOWED_SCHEMES` | `https` | http connector schemes |
 | `WORKER_ALLOWED_PATHS` | *(empty)* | file connector path prefixes |
 | `WORKER_ALLOWED_DSN_REFS` | *(empty)* | env var names the postgres connector may resolve |
-| `WORKER_UNRESTRICTED_CONNECTORS` | `false` | disables allowlists — local dev only |
+| `WORKER_UNRESTRICTED_CONNECTORS` | `false` | disables allowlists — requires `WORKER_INSECURE_DEV=1` |
+| `WORKER_INSECURE_DEV` | `false` | explicit opt-in to run unauthenticated / unrestricted on a local machine |
 | `WORKER_MAX_THREADS` | `8` | |
 
 ---
@@ -359,6 +362,11 @@ set is always visible in the log.
 `simulated`, and the worker they used, and every endpoint that reports outcomes
 carries it through.
 
+**A failure always says what failed.** Every worker reply — including a 400 for
+a request that did not parse — carries `run_id` and `step_key`, pulled from the
+raw body when the dataclass could not be built. The dispatcher treats a reply
+that names a different execution as a permanent failure rather than a result.
+
 ---
 
 ## Development
@@ -370,6 +378,8 @@ cd orchestrator && go build ./... && go test ./...
 # Python  (live Postgres tests skip unless PG_TEST_DSN is set)
 PYTHONPATH="$PWD" python -m unittest discover -s executor/tests -p "test_*.py"
 ```
+
+Both run in CI on every pull request (`.github/workflows/ci.yml`).
 
 ### Design rules
 
@@ -452,7 +462,8 @@ Known gaps, in the order they matter:
    self-consistency, no eval set.
 3. **No end-to-end test.** Both suites are unit-level. Nothing exercises
    interpret → create → approve → run against a live worker and database.
-4. **No CI, no Docker, no compose.** `.github/workflows/` is empty.
+4. **No Docker, no compose.** CI exists (`.github/workflows/ci.yml` runs both
+   suites) but nothing packages the three processes together.
 5. **`EXEC_MODE` defaults to `local`,** which executes nothing. Honestly labelled
    now, but a default-config green run still only proves the scheduler walked a
    graph.

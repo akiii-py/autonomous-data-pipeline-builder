@@ -267,8 +267,8 @@ mints a new key, never matches, and re-runs the load that had in fact succeeded.
    cannot reach any host, path, or DSN, and an unconfigured catalog denies every
    load destination. That is deliberate, and it means a fresh checkout needs
    configuration before a real pipeline runs.
-7. **Still empty:** `ui/`, `tests/`, `.github/workflows/`. No Dockerfile, no
-   compose file, no CI.
+7. **Still empty:** `ui/`, `tests/`. No Dockerfile, no compose file. CI is in
+   place (`.github/workflows/ci.yml`).
 8. **No end-to-end test.** The Go suite is unit-level; the Python suite covers
    the runner, the wire contract, allowlists and replay, but nothing exercises
    interpret → create → approve → run against a live worker and database.
@@ -373,9 +373,9 @@ process memory, and undriven runs — are done. What is left divides cleanly.
    landed, with `EXEC_MODE=worker` against a real worker and database. Nothing
    currently proves the whole path executes, and the execution model just
    changed substantially.
-2. **CI and compose.** A workflow running `go test ./...` and the Python suite,
-   and a compose file covering orchestrator + worker + Postgres. CI is what keeps
-   the structural work from regressing; compose is what makes the e2e test cheap.
+2. **Compose.** A compose file covering orchestrator + worker + Postgres. CI
+   already runs `go test ./...` and the Python suite; compose is what makes the
+   e2e test cheap.
 
 **Tier 2 — finish the promise in the name**
 
