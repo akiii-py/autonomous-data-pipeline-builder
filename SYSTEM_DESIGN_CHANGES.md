@@ -8,6 +8,34 @@ CI, Docker, and test coverage are excluded even where the audit rated them HIGH.
 
 ---
 
+> ## ✅ All 18 implemented in commit `4425c5d`
+>
+> This document is the specification these changes were built from, kept as the
+> record of *why* each one was made. The rules derived from it are in
+> `CLAUDE.md` and are binding on new code — each rule cites its D-number.
+>
+> Three decisions the spec deliberately left open were settled during
+> implementation:
+>
+> - **D-17 — the event log is authoritative.** Status writes and their events
+>   share a transaction; a failed emit fails the transition.
+> - **D-15 — siblings are cancelled on failure.** The first step to fail cancels
+>   the rest of the ready set; each cancelled sibling still reaches a terminal
+>   state and emits its own event.
+> - **D-03 — the ledger keys on `(run_id, step_key)`, not the attempt.** The spec
+>   offered `(run_id, step_key, attempt)`; that cannot work, because a retry mints
+>   a new attempt number and would never match the record it is meant to find.
+>   The attempt is carried for traceability only.
+>
+> Two things were added beyond the 18, because the changes would have been
+> unsafe without them: a shared-secret token on the worker's `/execute`, and
+> per-connector allowlists. Adding a durable execution ledger to an endpoint
+> anyone could call would have made the original exposure worse.
+>
+> For current behaviour see `docs/PROJECT_UNDERSTANDING.md`.
+
+---
+
 ## A. Contracts between orchestrator and worker
 
 ### D-01 — Introduce a `StepResult` value type

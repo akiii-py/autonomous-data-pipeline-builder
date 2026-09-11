@@ -6,6 +6,45 @@ Scope: static read of every source file in `orchestrator/` and `executor/`, plus
 
 ---
 
+> ## ⚠️ This is a historical record, not current state
+>
+> This audit describes the codebase **as of commit `997a8ed`**. The structural
+> changes it prompted were specified in `SYSTEM_DESIGN_CHANGES.md` and
+> implemented in commit `4425c5d`. The findings below are preserved unedited —
+> the reasoning is what makes the current design legible.
+>
+> For how the system works **now**, read `docs/PROJECT_UNDERSTANDING.md`.
+>
+> **Resolution status:**
+>
+> | Finding | Status | Where |
+> |---|---|---|
+> | F-01 unauthenticated `/execute` | Resolved | `X-Worker-Token` + per-connector allowlists in `executor/connectors/registry.py` |
+> | F-02 retry double-executes a load | Resolved | idempotency ledger keyed `(run_id, step_key)` |
+> | F-03 every metric measures a simulator | Resolved | `exec_mode` / `simulated` on the run row, carried into all read paths; unknown `EXEC_MODE` now fails startup |
+> | F-04 panic kills the orchestrator | Resolved | `recover()` in the scheduler and the run loop |
+> | F-05 restart strands runs in `running` | Resolved | claim + lease + heartbeat; expiry is the recovery mechanism |
+> | F-06 plaintext credentials served over the API | Resolved | `dsn_ref` indirection + redaction on read |
+> | F-07 no human gate on irreversible work | Resolved | approval stage; `POST /run` returns 409 until approved |
+> | F-08 successful run can go unrecorded | Resolved | status and event share one transaction |
+> | F-09 artifacts in a process-local dict | Resolved | `run_artifacts` table with cleanup at run completion |
+> | F-10 empty `API_KEY` disables auth | Partly resolved | startup warns, and `API_KEY` is now required when `ENVIRONMENT` is staging/production; still open by default in development |
+> | F-11 no backoff, no classification | Resolved | connector-produced error class; exponential backoff with jitter |
+> | F-12 degradation never counted | Resolved | `degradation_events` + `/metrics` breakdown |
+> | F-13 structural-only draft validation | Resolved | two-stage validation against `catalog.Context` |
+> | F-14 unversioned migrations | Resolved | `schema_migrations` with checksums |
+> | **F-15 no e2e test, no CI, no compose** | **Open** | highest-priority remaining work |
+> | F-16 sequential ready set | Resolved | bounded concurrency at both ends |
+> | F-17 audit log destroyed by delete cascade | Resolved | soft delete; FK cascades dropped |
+> | F-18 `GET /api/v1/pipelines` unbounded | Resolved | paginated |
+>
+> Rules **E5**, **E6** and **E7** remain unaddressed: there is still no NLP
+> service, so prompt configuration, structured output mode, and confidence
+> calibration cannot be evaluated. E6 in particular — confidence is still a
+> number the model reports about itself — is unchanged by this work.
+
+---
+
 ## 7.1 Summary
 
 The Go orchestrator's structural design holds up — layering, composition root, DAG validation, and event pairing are genuinely as documented. Everything downstream of that is unsafe or untrue. The single most urgent finding is that the Python worker's `/execute` is completely unauthenticated and accepts a fully attacker-controlled `config`, which yields arbitrary SQL execution against any reachable database, arbitrary file read/write on the worker host, and outbound SSRF — one primitive, not three separate gaps. Close behind it: `EXEC_MODE` still defaults to a 10 ms no-op dispatcher with no `simulated` marker anywhere, so every green run and every metric in the system currently measures a simulator. There is no confirmation gate on `load` steps, no dedup on retry, no durability across restart, and no `recover()` in the run goroutine — a panicking step kills the whole orchestrator process. `PROJECT_UNDERSTANDING.md` is, unusually, accurate; `README.md` and several code comments are the things that mislead.
