@@ -1,16 +1,58 @@
+"""Worker HTTP server.
+
+Threaded, because parallelism across steps belongs to the scheduler but the
+worker has to be able to accept the concurrent dispatches that produces —
+parallelising only one end converts a design win into queueing latency
+(D-15, rule 4.1).
+
+Parsing happens once here, into the dataclasses that define the wire contract
+(D-04). Nothing downstream reads raw dicts.
+"""
+
+import hmac
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict
+import logging
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict, Optional
 
 try:
+    from executor.connectors.registry import build_registry
+    from executor.worker import config as worker_config
+    from executor.worker.artifacts import (
+        InMemoryArtifactStore,
+        InMemoryExecutionLedger,
+        PostgresArtifactStore,
+        PostgresExecutionLedger,
+    )
     from executor.worker.errors import WorkerExecutionError
-    from executor.worker.runner import execute_step
-except ImportError:
+    from executor.worker.models import ExecuteRequest, ExecuteResponse
+    from executor.worker.runner import StepRunner
+except ImportError:  # pragma: no cover - import shim for PYTHONPATH=executor
+    from connectors.registry import build_registry
+    from worker import config as worker_config
+    from worker.artifacts import (
+        InMemoryArtifactStore,
+        InMemoryExecutionLedger,
+        PostgresArtifactStore,
+        PostgresExecutionLedger,
+    )
     from worker.errors import WorkerExecutionError
-    from worker.runner import execute_step
+    from worker.models import ExecuteRequest, ExecuteResponse
+    from worker.runner import StepRunner
+
+logger = logging.getLogger("executor.worker")
+
+MAX_BODY_BYTES = 8 * 1024 * 1024
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
+    # Set by build_server. Shared across threads; StepRunner holds no mutable
+    # per-request state.
+    runner: Optional[StepRunner] = None
+    auth_token: str = ""
+
+    protocol_version = "HTTP/1.1"
+
     def do_GET(self):
         if self.path == "/health":
             self._send(200, {"status": "healthy", "service": "executor-worker"})
@@ -22,27 +64,49 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
             return
 
+        if not self._authorized():
+            self._send(401, {"status": "error", "error": "unauthorized"})
+            return
+
         try:
             payload = self._json_body()
-            run_id = payload.get("run_id")
-            step = payload.get("step")
-            if not run_id or not isinstance(step, dict):
-                raise WorkerExecutionError("run_id and step are required")
-
-            result = execute_step(run_id, step)
-            self._send(200, {"status": "ok", "result": result})
+            req = ExecuteRequest.parse(payload)
         except WorkerExecutionError as exc:
-            self._send(400, {"status": "error", "error": str(exc)})
-        except Exception as exc:
-            self._send(500, {"status": "error", "error": str(exc)})
+            self._send(400, ExecuteResponse(status="error", error=str(exc)).to_dict())
+            return
+        except (ValueError, UnicodeDecodeError) as exc:
+            self._send(400, ExecuteResponse(status="error", error=f"invalid body: {exc}").to_dict())
+            return
+
+        if self.runner is None:
+            self._send(503, ExecuteResponse(status="error", error="worker not initialised").to_dict())
+            return
+
+        # execute() classifies and returns rather than raising, so a failed step
+        # is a 200 carrying a failed StepResult. The orchestrator reads the
+        # classification off the result (D-02).
+        result = self.runner.execute(req)
+        response = ExecuteResponse(
+            status="error" if result.failed else "ok",
+            result=result,
+            error=result.error_message or None,
+        )
+        self._send(200, response.to_dict())
 
     def log_message(self, format: str, *args: Any) -> None:
-        # Keep worker logs clean for now.
-        return
+        logger.debug("%s - %s", self.address_string(), format % args)
+
+    def _authorized(self) -> bool:
+        if not self.auth_token:
+            return True
+        provided = self.headers.get("X-Worker-Token", "")
+        return hmac.compare_digest(provided, self.auth_token)
 
     def _json_body(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8")
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > MAX_BODY_BYTES:
+            raise ValueError("request body too large")
+        raw = self.rfile.read(length).decode("utf-8") if length else ""
         return json.loads(raw) if raw else {}
 
     def _send(self, code: int, payload: Dict[str, Any]) -> None:
@@ -54,9 +118,65 @@ class WorkerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def run(host: str = "0.0.0.0", port: int = 8090) -> None:
-    server = HTTPServer((host, port), WorkerHandler)
-    print(f"worker listening on {host}:{port}")
+def build_runner(cfg: worker_config.WorkerConfig) -> StepRunner:
+    """Assemble the runner's collaborators.
+
+    Durable storage is the production path. The in-memory fallback exists only so
+    a developer can start the worker without a database; it is announced loudly
+    because it reintroduces exactly the constraint D-06 removed.
+    """
+    registry = build_registry(
+        allowed_hosts=cfg.allowed_hosts,
+        allowed_schemes=cfg.allowed_schemes,
+        allowed_paths=cfg.allowed_paths,
+        allowed_dsn_refs=cfg.allowed_dsn_refs,
+        unrestricted=cfg.unrestricted_connectors,
+    )
+
+    if cfg.durable_storage_configured:
+        return StepRunner(
+            registry=registry,
+            artifacts=PostgresArtifactStore(cfg.database_url),
+            ledger=PostgresExecutionLedger(cfg.database_url),
+        )
+
+    logger.warning(
+        "WORKER_DATABASE_URL is not set: using in-process artifact storage. "
+        "The worker cannot be restarted or scaled in this mode, and retries are "
+        "not deduplicated."
+    )
+    return StepRunner(
+        registry=registry,
+        artifacts=InMemoryArtifactStore(),
+        ledger=InMemoryExecutionLedger(),
+    )
+
+
+def build_server(cfg: Optional[worker_config.WorkerConfig] = None) -> ThreadingHTTPServer:
+    cfg = cfg or worker_config.load()
+
+    handler = type(
+        "ConfiguredWorkerHandler",
+        (WorkerHandler,),
+        {"runner": build_runner(cfg), "auth_token": cfg.auth_token},
+    )
+
+    server = ThreadingHTTPServer((cfg.host, cfg.port), handler)
+    server.daemon_threads = True
+    return server
+
+
+def run() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    cfg = worker_config.load()
+    if not cfg.auth_token:
+        logger.warning("WORKER_TOKEN is not set: /execute is unauthenticated")
+    if cfg.unrestricted_connectors:
+        logger.warning("WORKER_UNRESTRICTED_CONNECTORS is set: connector allowlists are disabled")
+
+    server = build_server(cfg)
+    logger.info("worker listening on %s:%d", cfg.host, cfg.port)
     server.serve_forever()
 
 

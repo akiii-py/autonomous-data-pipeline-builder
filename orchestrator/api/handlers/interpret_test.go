@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/akshat/pipeline-orchestrator/internal/catalog"
 	"github.com/akshat/pipeline-orchestrator/internal/interpreter"
 	"github.com/akshat/pipeline-orchestrator/internal/models"
 )
@@ -20,6 +21,20 @@ type stubInterpreter struct {
 
 func (s stubInterpreter) Interpret(ctx context.Context, req interpreter.Request) (*interpreter.Result, error) {
 	return s.result, s.err
+}
+
+// testCatalog is the context drafts are validated against. Destinations are
+// deliberately populated: an empty allowlist denies every load target.
+func testCatalog() catalog.Provider {
+	c, err := catalog.Load(catalog.Options{
+		Connectors:   []string{"file", "http", "postgres"},
+		Destinations: []string{"warehouse.sales", "/tmp/out.json"},
+		TransformOps: []string{"select", "filter_eq", "aggregate_sum"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return catalog.NewStatic(c)
 }
 
 func TestInterpretRequestInvalidBody(t *testing.T) {
@@ -36,6 +51,7 @@ func TestInterpretRequestInvalidBody(t *testing.T) {
 
 func TestInterpretRequestAutoMode(t *testing.T) {
 	h := &PipelineHandler{
+		Catalog: testCatalog(),
 		Interpreter: stubInterpreter{
 			result: &interpreter.Result{
 				Confidence: 0.92,
@@ -80,6 +96,7 @@ func TestInterpretRequestAutoMode(t *testing.T) {
 
 func TestInterpretRequestManualFallbackOnServiceError(t *testing.T) {
 	h := &PipelineHandler{
+		Catalog:          testCatalog(),
 		Interpreter:      stubInterpreter{err: errors.New("dial tcp timeout")},
 		NLPMinConfidence: 0.7,
 	}
@@ -110,6 +127,7 @@ func TestInterpretRequestManualFallbackOnServiceError(t *testing.T) {
 
 func TestInterpretRequestManualFallbackOnLowConfidence(t *testing.T) {
 	h := &PipelineHandler{
+		Catalog: testCatalog(),
 		Interpreter: stubInterpreter{
 			result: &interpreter.Result{
 				Confidence: 0.2,
@@ -146,6 +164,7 @@ func TestInterpretRequestManualFallbackOnLowConfidence(t *testing.T) {
 
 func TestInterpretRequestManualFallbackOnInvalidPipeline(t *testing.T) {
 	h := &PipelineHandler{
+		Catalog: testCatalog(),
 		Interpreter: stubInterpreter{
 			result: &interpreter.Result{
 				Confidence: 0.95,

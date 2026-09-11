@@ -232,7 +232,9 @@ func parseOffset(raw string) (int, error) {
 
 func isValidRunStatus(s string) bool {
 	switch s {
-	case models.RunStatusPending, models.RunStatusRunning, models.RunStatusCompleted, models.RunStatusFailed, models.RunStatusSkipped:
+	case models.RunStatusPending, models.RunStatusQueued, models.RunStatusRunning,
+		models.RunStatusCompleted, models.RunStatusFailed, models.RunStatusCancelled,
+		models.RunStatusSkipped:
 		return true
 	default:
 		return false

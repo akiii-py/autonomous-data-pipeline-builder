@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akshat/pipeline-orchestrator/internal/catalog"
 	"github.com/akshat/pipeline-orchestrator/internal/models"
 )
 
@@ -19,11 +20,17 @@ type Service interface {
 }
 
 // Request is the payload sent to an NLP interpretation service.
+//
+// Catalog carries the schema, connector allowlist, destination allowlist and
+// transform ops the model may use (D-14). It is not optional decoration: the
+// same object validates the reply, so "referenced tables must exist" is
+// checkable only because the request said which tables exist (rule 3.3).
 type Request struct {
-	Query      string `json:"query"`
-	SourceHint string `json:"source_hint,omitempty"`
-	TargetHint string `json:"target_hint,omitempty"`
-	DryRun     bool   `json:"dry_run"`
+	Query      string           `json:"query"`
+	SourceHint string           `json:"source_hint,omitempty"`
+	TargetHint string           `json:"target_hint,omitempty"`
+	DryRun     bool             `json:"dry_run"`
+	Catalog    *catalog.Context `json:"catalog,omitempty"`
 }
 
 // Result is a normalized NLP interpretation response.
@@ -102,10 +109,6 @@ func (c *HTTPClient) Interpret(ctx context.Context, req Request) (*Result, error
 			Description: envelope.Description,
 			Steps:       envelope.Steps,
 		}
-	}
-
-	if pipeline == nil {
-		return nil, fmt.Errorf("nlp response missing pipeline draft")
 	}
 
 	return &Result{

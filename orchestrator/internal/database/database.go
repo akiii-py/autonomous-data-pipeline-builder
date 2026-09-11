@@ -1,9 +1,12 @@
 package database
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -27,94 +30,142 @@ func Connect(databaseURL string) (*sql.DB, error) {
 	return db, nil
 }
 
+const schemaMigrationsDDL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+	version     INT PRIMARY KEY,
+	name        TEXT NOT NULL,
+	checksum    TEXT NOT NULL,
+	applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`
+
+// AppliedMigration is one row of the schema history.
+type AppliedMigration struct {
+	Version   int
+	Name      string
+	Checksum  string
+	AppliedAt time.Time
+}
+
+// RunMigrations applies every unapplied migration in version order, inside a
+// transaction per migration, and records it in schema_migrations (D-11).
+//
+// A migration whose recorded checksum no longer matches its source is a hard
+// error: it means an applied migration was edited, and the database's actual
+// shape can no longer be derived from this file.
 func RunMigrations(db *sql.DB) error {
-	migrations := []string{
-		migrationCreatePipelines,
-		migrationPhaseTwo,
-		migrationPhaseFive,
+	if _, err := db.Exec(schemaMigrationsDDL); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	for i, m := range migrations {
-		if _, err := db.Exec(m); err != nil {
-			return fmt.Errorf("migration %d: %w", i+1, err)
+	applied, err := appliedMigrations(db)
+	if err != nil {
+		return err
+	}
+
+	pending := append([]Migration(nil), migrations...)
+	sort.Slice(pending, func(i, j int) bool { return pending[i].Version < pending[j].Version })
+
+	count := 0
+	for _, m := range pending {
+		sum := checksum(m.SQL)
+
+		if prev, ok := applied[m.Version]; ok {
+			if prev.Checksum != sum {
+				return fmt.Errorf(
+					"migration %d (%s) was modified after being applied: recorded checksum %s, current %s",
+					m.Version, m.Name, prev.Checksum, sum,
+				)
+			}
+			continue
 		}
+
+		if err := applyOne(db, m, sum); err != nil {
+			return err
+		}
+		count++
+		log.Printf("applied migration %d: %s", m.Version, m.Name)
 	}
 
-	log.Println("database migrations applied")
+	if count == 0 {
+		log.Printf("database schema up to date (version %d)", currentVersion(applied, pending))
+	} else {
+		log.Printf("database migrations applied: %d", count)
+	}
 	return nil
 }
 
-const migrationCreatePipelines = `
-CREATE TABLE IF NOT EXISTS pipelines (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'draft',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+func applyOne(db *sql.DB, m Migration, sum string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration %d: %w", m.Version, err)
+	}
+	defer tx.Rollback()
 
-CREATE TABLE IF NOT EXISTS pipeline_steps (
-    id          TEXT PRIMARY KEY,
-    pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    type        TEXT NOT NULL,
-    config      JSONB NOT NULL DEFAULT '{}',
-    depends_on  TEXT[] NOT NULL DEFAULT '{}',
-    step_order  INT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+	if _, err := tx.Exec(m.SQL); err != nil {
+		return fmt.Errorf("migration %d (%s): %w", m.Version, m.Name, err)
+	}
 
-CREATE INDEX IF NOT EXISTS idx_steps_pipeline_id ON pipeline_steps(pipeline_id);
-`
+	if _, err := tx.Exec(
+		`INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)`,
+		m.Version, m.Name, sum,
+	); err != nil {
+		return fmt.Errorf("record migration %d: %w", m.Version, err)
+	}
 
-const migrationPhaseTwo = `
-ALTER TABLE pipeline_steps
-ADD COLUMN IF NOT EXISTS step_key TEXT NOT NULL DEFAULT '';
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration %d: %w", m.Version, err)
+	}
+	return nil
+}
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_pipeline_step_key
-ON pipeline_steps(pipeline_id, step_key)
-WHERE step_key <> '';
+func appliedMigrations(db *sql.DB) (map[int]AppliedMigration, error) {
+	rows, err := db.Query(`SELECT version, name, checksum, applied_at FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	defer rows.Close()
 
-CREATE TABLE IF NOT EXISTS pipeline_runs (
-	id          TEXT PRIMARY KEY,
-	pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
-	status      TEXT NOT NULL DEFAULT 'pending',
-	started_at  TIMESTAMPTZ,
-	finished_at TIMESTAMPTZ,
-	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+	out := make(map[int]AppliedMigration)
+	for rows.Next() {
+		var m AppliedMigration
+		if err := rows.Scan(&m.Version, &m.Name, &m.Checksum, &m.AppliedAt); err != nil {
+			return nil, fmt.Errorf("scan schema_migrations: %w", err)
+		}
+		out[m.Version] = m
+	}
+	return out, rows.Err()
+}
 
-CREATE TABLE IF NOT EXISTS step_runs (
-	id              TEXT PRIMARY KEY,
-	pipeline_run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
-	step_id         TEXT NOT NULL REFERENCES pipeline_steps(id) ON DELETE CASCADE,
-	status          TEXT NOT NULL DEFAULT 'pending',
-	started_at      TIMESTAMPTZ,
-	finished_at     TIMESTAMPTZ,
-	error           TEXT NOT NULL DEFAULT '',
-	created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+// SchemaVersion answers "what schema am I at?", which was unanswerable while
+// migrations were unversioned constants.
+func SchemaVersion(db *sql.DB) (int, error) {
+	var v sql.NullInt64
+	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil {
+		return 0, err
+	}
+	if !v.Valid {
+		return 0, nil
+	}
+	return int(v.Int64), nil
+}
 
-CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline_id ON pipeline_runs(pipeline_id);
-CREATE INDEX IF NOT EXISTS idx_step_runs_run_id ON step_runs(pipeline_run_id);
-`
+func currentVersion(applied map[int]AppliedMigration, all []Migration) int {
+	max := 0
+	for v := range applied {
+		if v > max {
+			max = v
+		}
+	}
+	for _, m := range all {
+		if m.Version > max {
+			max = m.Version
+		}
+	}
+	return max
+}
 
-const migrationPhaseFive = `
-CREATE TABLE IF NOT EXISTS pipeline_run_events (
-	id          TEXT PRIMARY KEY,
-	pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
-	run_id      TEXT REFERENCES pipeline_runs(id) ON DELETE CASCADE,
-	step_id     TEXT REFERENCES pipeline_steps(id) ON DELETE SET NULL,
-	step_key    TEXT NOT NULL DEFAULT '',
-	level       TEXT NOT NULL,
-	event_type  TEXT NOT NULL,
-	message     TEXT NOT NULL,
-	metadata    JSONB NOT NULL DEFAULT '{}',
-	created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_run_events_pipeline_id ON pipeline_run_events(pipeline_id);
-CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON pipeline_run_events(run_id);
-CREATE INDEX IF NOT EXISTS idx_run_events_created_at ON pipeline_run_events(created_at DESC);
-`
+func checksum(sqlText string) string {
+	sum := sha256.Sum256([]byte(sqlText))
+	return hex.EncodeToString(sum[:])
+}
